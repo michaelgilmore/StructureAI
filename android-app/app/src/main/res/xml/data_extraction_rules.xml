@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ equivalent of backup_rules.xml — see that file's comment
+     for why auth/CredentialStore.kt's encrypted "remember me" file needs
+     an explicit exclusion here rather than relying on encryption alone. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="todo_ai_credentials.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="todo_ai_credentials.xml" />
+    </device-transfer>
+</data-extraction-rules>

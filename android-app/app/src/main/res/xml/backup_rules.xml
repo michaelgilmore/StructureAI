@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auth tokens themselves are NOT hand-stored anywhere in this app — the
+     Cognito SDK persists its own session under its own storage (see
+     CognitoAuthManager's doc comment) — but auth/CredentialStore.kt's
+     "remember me" password IS a real EncryptedSharedPreferences file this
+     app creates, and it needs an explicit exclusion here: Android does NOT
+     exclude SharedPreferences files from backup by default (encryption
+     alone doesn't opt a file out), and restoring an encrypted file without
+     its original device's Keystore-resident master key throws when read
+     rather than just coming back empty. Excluding it here means a
+     restored install just shows "remember me" unchecked, like a fresh
+     install — not a crash. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="todo_ai_credentials.xml" />
+</full-backup-content>

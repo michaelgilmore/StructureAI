@@ -1,0 +1,32 @@
+# Android
+android-app/**/build/
+android-app/**/.gradle/
+android-app/**/local.properties
+android-app/**/*.iml
+android-app/.idea/
+
+# AWS CDK / Node
+aws-backend/**/node_modules/
+aws-backend/**/cdk.out/
+aws-backend/**/*.js
+aws-backend/**/*.d.ts
+!aws-backend/**/jest.config.js
+
+# Home bridge bot (Python or Node — keep both patterns)
+home-bridge-bot/**/__pycache__/
+home-bridge-bot/**/.venv/
+home-bridge-bot/**/node_modules/
+
+# Secrets — never commit these
+.env
+.env.*
+*.pem
+**/secrets.json
+local_notes/
+
+# OS / editor
+.DS_Store
+.vscode/
+
+google-services.json
+mgaitodo-firebase-adminsdk-fbsvc-a1673a9111.json

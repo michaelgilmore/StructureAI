@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Structure</string>
+    <string name="reminder_channel_name">Todo reminders</string>
+    <string name="reminder_channel_description">Due-date and reminder notifications for your todos</string>
+</resources>

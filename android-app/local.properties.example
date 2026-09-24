@@ -1,0 +1,16 @@
+# Copy this file to local.properties (already in .gitignore — same file
+# Android Studio's own sdk.dir already lives in) and fill in the real
+# values below. app/build.gradle.kts reads these at build time; nothing
+# else in the app reads this file directly, and no source change is
+# needed once it's filled in — see android-app/README.md's "Fill in the
+# real backend values" section for exactly where each value comes from.
+#
+# Leaving a key out (or leaving this whole file missing) doesn't break the
+# build — build.gradle.kts falls back to an obvious REPLACE_WITH_YOUR_...
+# placeholder so a fresh clone still compiles, it'll just point at nothing
+# until these are filled in for real.
+
+api.baseUrl=https://REPLACE_WITH_YOUR_API_URL.execute-api.us-east-1.amazonaws.com/
+cognito.userPoolId=REPLACE_WITH_YOUR_USER_POOL_ID
+cognito.clientId=REPLACE_WITH_YOUR_CLIENT_ID
+cognito.region=us-east-1

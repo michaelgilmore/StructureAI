@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Backs the FileProvider declared in AndroidManifest.xml. "reports" here
+     must match the subfolder name PdfReportGenerator.kt creates under
+     context.cacheDir — cache-path resolves relative to getCacheDir(). -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="reports" path="reports/" />
+</paths>
