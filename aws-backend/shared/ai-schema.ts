@@ -30,8 +30,17 @@ export const planRequestSchema = z.object({
 export const chatRequestSchema = z.object({
   kind: z.literal('chat'),
   mode: modeSchema,
-  subjectType: z.enum(['plan', 'todo', 'general']).default('general'),
-  /** A todo id (subjectType='todo') or a Plan's `{scope}#{periodStart}` (subjectType='plan'). */
+  subjectType: z.enum(['plan', 'todo', 'general', 'planning']).default('general'),
+  /**
+   * A todo id (subjectType='todo') or a Plan's `{scope}#{periodStart}`
+   * (subjectType='plan'). Absent for 'general' and for 'planning' — unlike
+   * 'plan' (which discusses one already-generated, stored Plan record),
+   * 'planning' isn't grounded in any stored record at all; each turn is
+   * re-grounded against the user's current open todos fresh (see
+   * lambdas/ai-orchestrator/index.ts's buildSubjectContext) since the whole
+   * point is reacting to today's live state, not a snapshot from whenever
+   * a plan was last generated.
+   */
   subjectId: z.string().max(200).optional(),
   /** Omit to start a new conversation; pass an existing Conversation.id to continue one. */
   conversationId: z.string().uuid().optional(),
@@ -75,10 +84,30 @@ export const planToolOutputSchema = z.object({
 const aiCreateTodoSchema = createTodoSchema.omit({ reminderAt: true, recurrenceRule: true, source: true });
 export type AiCreateTodoInput = z.infer<typeof aiCreateTodoSchema>;
 
+/**
+ * What the chat model may propose changing an EXISTING todo's due date to
+ * — see lambdas/ai-orchestrator/index.ts's 'planning' subjectType (the
+ * only place this is currently populated) and shared/ai-finalize.ts's
+ * filterValidDueDateChanges. Unlike aiCreateTodoSchema above, this is
+ * never written to DynamoDB by this codebase — it's surfaced to the app
+ * as a proposal the person reviews and accepts (or ignores) one at a time,
+ * and accepting one goes through the same `PATCH /todos/{id}` endpoint any
+ * other due-date edit already uses (lambdas/todo-api/index.ts's
+ * updateTodo), not a new write path here.
+ */
+export const dueDateChangeSchema = z.object({
+  todoId: z.string().min(1),
+  newDueDate: dateSchema,
+  rationale: z.string().trim().min(1).max(300),
+});
+export type DueDateChangeSuggestion = z.infer<typeof dueDateChangeSchema>;
+
 export const chatToolOutputSchema = z.object({
   reply: z.string().trim().min(1).max(4000),
   /** Zero or more todos to actually create right now — see aiCreateTodoSchema's doc comment. Absent/empty means nothing to create this turn. */
   createTodos: z.array(aiCreateTodoSchema).max(10).optional(),
+  /** Zero or more suggested due-date changes for todos that already exist — see dueDateChangeSchema's doc comment. Only ever populated in a 'planning' conversation; ai-orchestrator drops anything offered outside one. */
+  suggestedDueDateChanges: z.array(dueDateChangeSchema).max(20).optional(),
 });
 
 /**
@@ -139,6 +168,25 @@ export const CHAT_OUTPUT_JSON_SCHEMA: Record<string, unknown> = {
           tags: { type: 'array', items: { type: 'string' }, description: 'Optional short tags' },
         },
         required: ['title'],
+      },
+    },
+    suggestedDueDateChanges: {
+      type: 'array',
+      description:
+        'Planning mode only. Zero or more suggested due-date changes for todos that already exist — this does ' +
+        'NOT change anything by itself, it is shown to the user as something they can individually choose to ' +
+        'accept. Use it when you notice two or more related todos (similar title/project/tags) or a dependency ' +
+        "between todos where the current due dates don't make sense together — e.g. one is due before " +
+        'something it depends on, or a group of related todos are scattered when they should land together. ' +
+        'Only reference todoId values from the todos list you were given, and never propose a date in the past.',
+      items: {
+        type: 'object',
+        properties: {
+          todoId: { type: 'string', description: 'Must be one of the todo ids provided in the input' },
+          newDueDate: { type: 'string', description: 'YYYY-MM-DD, the suggested new due date' },
+          rationale: { type: 'string', description: 'One short sentence on why this change makes sense' },
+        },
+        required: ['todoId', 'newDueDate', 'rationale'],
       },
     },
   },

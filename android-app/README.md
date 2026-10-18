@@ -129,22 +129,53 @@ Two new screens, reachable via a bottom navigation bar added alongside
 them (Todos / Plan — Todo detail and the Dialog screen are pushed on top
 of whichever tab is active rather than being tabs themselves):
 
-- **Planner** (`ui/planner/`) — pick a scope (day/week/month/year) and a
-  start date, optionally add a free-text focus, and generate a plan.
-  Shows the model's summary plus an ordered agenda; each item resolves its
-  title from the local Room todo cache for display (falling back to a
-  placeholder if that todo was deleted locally since the plan was
-  generated) and taps through to `TodoDetailScreen`. A "Discuss this plan"
-  button opens Dialog grounded in that plan.
-- **Dialog** (`ui/dialog/`) — a chat screen grounded in one of three
+- **Planner** (`ui/planner/`) — a minimal launcher: a short explanation and
+  a single "Start planning" button that opens Dialog grounded in
+  `ChatSubjectType.PLANNING`. Generating a plan is no longer a one-shot
+  scope/date/focus form — it's a conversation (see "Planning is now
+  conversational" below). The old form and its `PlannerViewModel` still
+  exist but are unreferenced by this screen now.
+- **Dialog** (`ui/dialog/`) — a chat screen grounded in one of four
   subjects (`ChatSubjectType`): a single todo (opened via "Ask AI about
-  this" on `TodoDetailScreen`), a generated plan (opened via Planner's
-  "Discuss this plan"), or general/no specific subject (opened via a chat
+  this" on `TodoDetailScreen`), a generated plan (grounded conversation
+  reachable by a stored Plan record's `"{scope}#{periodStart}"` id — the
+  old one-shot path, still supported but no longer reachable from the
+  Planner tab), a fresh planning session (`PLANNING`, opened via Planner's
+  "Start planning"), or general/no specific subject (opened via a chat
   icon on the todo list's top bar). Multi-turn: the server's
   `conversationId` from the first reply is threaded through subsequent
   sends so the model sees prior turns; losing it (process death, or
   leaving and reopening the screen) just starts a fresh conversation
   rather than crashing.
+
+**Planning is now conversational, and plays a more active role.** Opening
+Planner and tapping "Start planning" drops straight into Dialog
+(`ChatSubjectType.PLANNING`), which opens with a seeded "How many days
+would you like me to plan for?" (`DialogViewModel`'s `init` block — purely
+a local UI nicety, never sent to the server or counted in `conversationId`
+history; the model is separately instructed to ask the same thing for real
+on the first real turn — see `docs/api/README.md`'s "Planning mode"). Once
+that's answered, the model reviews every open todo (not just ones already
+due soon) and, rather than just repeating whatever due dates are already
+set, may propose changing one via `suggestedDueDateChanges` — e.g. two
+related todos, or one it infers depends on another, whose current due
+dates don't line up.
+
+Each suggestion is a **proposal the person reviews individually, never
+auto-applied** — same shape as "Dialog can create todos" below, but instead
+of a tappable chip it's a small card under the assistant's bubble (title,
+"Move to `<date>` (was `<date>`)", the model's one-line rationale, an
+Accept button, and a "View todo" button). `DialogViewModel.send()` resolves
+each suggestion's todo from the local Room cache (`TodoRepository.getTodo`)
+to fill in the title/current-date, silently dropping any suggestion whose
+todo isn't found locally rather than showing a broken card.
+`acceptDueDateSuggestion(messageId, suggestion)` fetches the existing
+`TodoEntity` and calls `TodoRepository.updateTodo` with every field
+unchanged except the new due date — `updateTodo` is a full replace, not a
+partial patch (see its own doc comment), the same fetch-then-full-resubmit
+shape `TodoRepository.completeTodo()` already uses — then flips that one
+suggestion's card to a disabled "Moved" state. Nothing else about the todo,
+and no other suggestion, is touched.
 
 Both are wired through a new `AiApiService`/`AiRepository` pair
 (`data/remote/AiApiService.kt`, `repository/AiRepository.kt`) rather than
@@ -844,3 +875,252 @@ real Pool ID/Client ID/API URL had been hand-edited into the tracked
 committed file on general principle; the review's one actual finding, a
 real Cognito password sitting in plaintext in some now-gitignored scratch
 scripts, was unrelated to this change and already fixed separately.
+
+**Update (conversational planning pass):** new, unverified piece — see
+"Planning is now conversational, and plays a more active role" above for
+the full design. Touches `model/ChatSubjectType.kt` (new `PLANNING` entry),
+`data/remote/dto/AiDto.kt` (new `DueDateChangeSuggestionDto`, the
+`ChatSendResultDto.suggestedDueDateChanges` field, defaulted so it degrades
+cleanly against an older-deployed backend — same pattern as `createdTodos`
+before it), `ui/dialog/DialogViewModel.kt` (`DueDateSuggestionUi`, the
+`ChatMessageUi.id`/`dueDateSuggestions` fields, the `init`-block seed
+message, `acceptDueDateSuggestion`), `ui/dialog/DialogScreen.kt` (the new
+`DueDateSuggestionCard` composable and the `onAcceptDueDateSuggestion`
+wiring), the rewritten `ui/planner/PlannerScreen.kt`, and `NavGraph.kt`'s
+simplified `composable(Routes.PLANNER)` block. Backend half
+(`subjectType: "planning"`, `suggestedDueDateChanges`,
+`filterValidDueDateChanges`) is covered by
+`aws-backend/lambdas/ai-orchestrator/README.md`'s own verification notes —
+same no-npm-registry, never-actually-run caveat as the rest of that side.
+
+No new library surface on the Android side at all — `FilledTonalButton`/
+`TextButton`/`Icons.Filled.Check` are the only names not previously used
+elsewhere in this app, and all three are long-standing Compose
+Material3/material-icons-extended members (checked against the same
+already-confirmed-available icon set `Icons.Filled.Checklist` came from for
+the AI-can-create-todos pass, not newly risked). Everything else —
+`ChatMessageUi` gaining a `UUID.randomUUID()`-defaulted `id`,
+`TodoRepository.getTodo`/`updateTodo` (both pre-existing, unchanged),
+`mapNotNull` over the resolved suggestions — is a straightforward extension
+of patterns already verified working in the original AI planning & dialog
+pass and the AI-can-create-todos pass. `PlannerViewModel.kt` and the
+backend's one-shot `kind: "plan"` machinery are now dead code — left in
+place rather than deleted (removing files on your machine needs an
+explicit delete-permission grant this pass didn't ask for), but worth
+knowing about if you're looking for where "generate a plan" used to work
+and coming up empty in the UI.
+
+## Add a todo by voice
+
+A small secondary FAB (mic icon, stacked above the existing "+" FAB) on
+both the Todos tab (`TodoListScreen`) and the Today tab (`PodScreen`).
+Tapping it launches the system's own speech-to-text screen
+(`android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH` — the same
+one-shot dictation dialog Google's own apps use), takes the top
+transcription candidate, and creates a todo titled with that text — no
+form, no confirmation dialog, just a Snackbar ("Added "..."") once it's
+in. Backing out of the mic dialog, or a transcript that comes back blank,
+does nothing — same as dismissing the manual add-todo form without saving.
+
+This deliberately isn't a hands-free "Ok Google, add a todo" — see the
+"Voice-adding todos: why not 'Ok Google'" research below for why that's a
+much bigger lift than it looks, and why this in-app mic button was the
+path actually chosen. You still have to open the app (or at least have it
+in the foreground) and tap the mic; from there, speaking is the only input
+needed.
+
+`VoiceInputButton` (`ui/components/VoiceInputButton.kt`) is the shared
+composable both screens use, extracted the same way `DueDatePicker` is
+shared across `PlannerScreen`/`TodoDetailScreen`/`ReportScreen`.
+`TodoListViewModel.addTodoFromVoice`/`PodViewModel.addTodoFromVoice` both
+call the existing `TodoRepository.createTodo(...)` — title only, every
+other field defaulted the same way an empty manual add-todo form would
+leave them, except `dueDate`: Today's voice button defaults it to today
+(matching that tab's own manual FAB, so a voice-added todo actually shows
+up there instead of landing undated on the Todos tab), the Todos tab's
+voice button leaves it unset (matching ITS manual FAB).
+
+**Why `RecognizerIntent` instead of a custom `SpeechRecognizer`:**
+delegating to the system activity needs no new runtime permission (no
+`RECORD_AUDIO` in `AndroidManifest.xml` — the system's own speech app holds
+that permission, not this one) and no `RecognitionListener` lifecycle
+(partial results, no-match, network-error states) for this app to manage.
+`ActivityNotFoundException` (caught in `VoiceInputButton`, surfaced as a
+Snackbar) is the only failure path, for a device with no speech-input app
+at all — which Android's own package-visibility documentation recommends
+over a `PackageManager.resolveActivity()` pre-check, since Android 11+'s
+visibility filtering can make that kind of check return null even when a
+recognizer IS installed. No `<queries>` manifest entry is needed either —
+that restriction governs introspecting other apps, not `startActivity()`
+itself.
+
+### Voice-adding todos: why not "Ok Google"?
+
+Before building the in-app mic button above, I looked into whether
+Structure could hook into "Ok Google"/"Hey Google" directly, the way e.g.
+a shopping-list app can. Short version: Google Assistant itself was
+retired on Android in favor of Gemini this year, and the mechanism for a
+third-party app to respond to a voice phrase hasn't caught up to that
+switch:
+
+- **App Actions** (`shortcuts.xml` + built-in intents) is the only
+  currently-working mechanism, and the closest built-in intent to "add a
+  todo" is `actions.intent.UPDATE_ITEM_LIST` ("Add milk to my Structure
+  list"), not a dedicated task/todo intent. But real voice invocation (not
+  just the Android Studio plugin's simulated `adb` trigger) appears to be
+  tied to your Play Store app identity — which would mean a one-time $25
+  Play developer account and at least an internal-track upload of
+  Structure, on top of the `shortcuts.xml`/manifest/fulfillment-activity
+  work, for an app that's never touched Play Console.
+- **Gemini AppFunctions** is Google's actual modern answer (annotate
+  Kotlin functions with `@AppFunction`, Gemini calls them as on-device
+  tools) but needs Android 16 (API 36)+, and the Gemini-triggering half is
+  still a private Early Access Program as of this year, with no guaranteed
+  access for a personal app.
+
+Given that, the in-app mic button above was the path actually chosen: no
+Play Console, no preview program, works today. If Google opens up
+AppFunctions more broadly later, that'd be worth revisiting — it's the
+only path that could get to a genuine hands-free "Ok Google, add X."
+
+**Update (voice-add pass):** new, unverified piece — see above. Touches
+`ui/components/VoiceInputButton.kt` (new file), `ui/todolist/TodoListScreen.kt`/
+`TodoListViewModel.kt`, and `ui/pod/PodScreen.kt`/`PodViewModel.kt` (both
+screens' `floatingActionButton` slot, a new `SnackbarHost`, and the
+`addTodoFromVoice` function on each ViewModel). No new Gradle dependency —
+`rememberLauncherForActivityResult`/`ActivityResultContracts` come from
+`androidx.activity:activity-compose`, already a dependency (see
+`app/build.gradle.kts`). Two names are new to this app and worth flagging
+the same way past passes flagged first-use icons/components:
+`SmallFloatingActionButton` and `Icons.Filled.Mic` — both long-standing,
+stable Compose Material3/material-icons-extended members, checked against
+the actual API docs rather than guessed, but — like everything else in
+this list — not confirmed by an actual Gradle sync. The one thing worth a
+deliberate first real-device test: whether `RecognizerIntent.ACTION_RECOGNIZE_SPEECH`
+resolves on your specific device/Android version without any extra setup
+— it should on any phone with the Google app installed (effectively all
+of them), but a device with no Google speech services at all would hit the
+`ActivityNotFoundException`/"Voice input isn't available" path instead,
+which is the intended graceful fallback, not a bug, if you ever see it.
+
+## Hands-free voice-add: "Listen for a new todo when I open the app"
+
+A Settings switch (`ui/settings/SettingsScreen.kt`, "Voice" section), off
+by default. On: a genuine cold start of the app immediately pops the same
+speech-to-text screen the mic FAB uses (see "Add a todo by voice" above),
+so "Ok Google, launch Structure" + speaking the todo is the entire
+interaction — no tap anywhere. Off: the Today tab opens normally, same as
+before this existed, and the mic FAB still works as a manual tap.
+
+This exists because "Ok Google, launch Structure" (which already worked
+for free — Assistant/Gemini's generic "open an app by name" command needs
+no developer setup at all) can't be told to also press the mic button:
+that generic command carries no parameters and gives the app no signal
+distinguishing "opened by voice" from "opened by a tap," so there's
+nothing to hook into without building the full Play-Console-gated App
+Actions path this project deliberately skipped (see "Voice-adding todos:
+why not 'Ok Google'?" above). Popping the mic dialog on every cold start —
+gated behind an opt-in switch rather than always-on — gets to the same
+hands-free result without any of that.
+
+**The hard part was correctly detecting "cold start."** A naive
+`LaunchedEffect(Unit)` inside `PodScreen` (the start destination, so the
+one screen guaranteed to compose on every real launch) isn't enough on its
+own — it re-runs every time `PodScreen` re-enters composition, which also
+happens when navigating back to the Today tab from Todos/Plan, and when
+"Ok Google, launch Structure" simply brings an already-running process's
+existing task back to the foreground (Android doesn't recreate the
+process or the Activity for that — there'd be nothing to "cold start").
+Both of those would otherwise re-pop the mic dialog on every tab switch
+or app resume, not just on a genuine fresh launch. The fix:
+`TodoAiApplication.hasAutoListenedThisLaunch`, a plain `var` on the
+Application singleton (not a ViewModel-held flag, which survives a
+configuration change but not "Activity destroyed and recreated by the
+same still-alive process" — not what's needed here either), consumed at
+most once and never reset until the process itself actually restarts.
+`PodViewModel.shouldAutoListenOnLaunch()` reads the preference with a
+direct `suspend` call (`VoiceLaunchPreferenceStore.currentlyEnabled()`,
+`dataStore.data.first()`) rather than collecting the exposed `StateFlow`,
+specifically to avoid a race against DataStore's first real emission —
+the `StateFlow`'s seeded default (`false`) could otherwise read as "off"
+for an instant before the real persisted value arrives.
+
+`VoiceInputButton.kt` was split into `rememberVoiceInputLauncher`
+(the actual `RecognizerIntent` launch + result-parsing logic, returning a
+trigger function) and `VoiceInputButton` (a thin FAB wrapper around it),
+so `PodScreen`'s auto-listen effect and its own mic FAB share one
+implementation instead of two copies that could drift apart.
+
+**Update (hands-free auto-listen pass):** new, unverified piece — see
+above. Touches `data/local/VoiceLaunchPreferenceStore.kt` (new file,
+same DataStore-backed shape as `AiModeStore`), `AppContainer.kt` (new
+property), `TodoAiApplication.kt` (new `hasAutoListenedThisLaunch` flag),
+`ui/components/VoiceInputButton.kt` (split into
+`rememberVoiceInputLauncher` + `VoiceInputButton`), `ui/pod/PodViewModel.kt`/
+`PodScreen.kt` (new constructor param, the cold-start `LaunchedEffect`),
+`ui/settings/SettingsViewModel.kt`/`SettingsScreen.kt` (new constructor
+param, the "Voice" section, a new `SettingsSwitchRow` composable), and
+`NavGraph.kt`'s `Routes.POD`/`Routes.SETTINGS` composable blocks. One name
+is new to this app: `androidx.compose.material3.Switch` — a long-standing,
+stable Material3 component, checked against the actual API (`checked`/
+`onCheckedChange` are its documented params) rather than guessed, but —
+like everything else in this list — not confirmed by an actual Gradle
+sync. Everything else reuses patterns already verified working elsewhere
+in this app: the DataStore shape is a direct copy of `AiModeStore`'s, and
+`rememberVoiceInputLauncher`'s actual `RecognizerIntent` mechanics are
+unchanged from the already-flagged "Add a todo by voice" pass above, just
+relocated into a function instead of inlined in one composable.
+
+**Spoken prompt before listening.** Every voice-input trigger — the mic
+FAB on the Todos/Today tabs and the hands-free auto-listen-on-launch path
+above — now speaks "What would you like to add?" out loud via
+`android.speech.tts.TextToSpeech` before opening the speech recognizer.
+This mattered most for auto-listen: with no screen interaction at all
+(you just said "Ok Google, launch Structure"), there was previously no
+cue that the app had actually started listening, only the recognizer's
+on-screen prompt text, easy to miss if the phone isn't in view.
+
+`ui/components/VoiceInputButton.kt` gained `rememberVoiceTts()` (owns one
+`TextToSpeech` engine for the composition's lifetime, released in
+`onDispose`) and `rememberVoiceInputLauncher` gained a required `tts:
+TextToSpeech?` parameter: when non-null, it speaks the prompt and opens
+the recognizer from `TextToSpeech`'s `onDone`/`onError` callback (posted
+back to the main thread via a `Handler`, since those callbacks fire on
+the TTS service's own thread — launching an `ActivityResultLauncher` from
+there would crash); when null (engine still initializing, or failed to
+initialize — logged, never thrown), it falls straight through to opening
+the recognizer with no spoken prompt, so this degrades silently rather
+than ever blocking voice-add. `VoiceInputButton` calls `rememberVoiceTts()`
+internally, so its own external signature didn't change — no edits needed
+in `TodoListScreen.kt`, which just calls `VoiceInputButton(...)` as before.
+
+`PodScreen.kt` previously built two independent voice-input pipelines —
+one `rememberVoiceInputLauncher` call feeding the auto-listen
+`LaunchedEffect`, and a separate `VoiceInputButton` in the FAB column with
+its own near-duplicate `onResult`/`onUnavailable` callbacks (and, after
+this pass, would've meant two separate `TextToSpeech` engines). Collapsed
+to one: `PodScreen` now calls `rememberVoiceTts()` once and passes it into
+a single `rememberVoiceInputLauncher`, and the FAB is a plain
+`SmallFloatingActionButton(onClick = startVoiceInput)` instead of its own
+`VoiceInputButton`. Same spoken prompt, same recognizer flow, whichever
+way it's triggered.
+
+`AndroidManifest.xml` gained a `<queries>` block for
+`android.intent.action.TTS_SERVICE` — Android 11+ package-visibility
+rules mean `TextToSpeech`'s internal engine lookup (`PackageManager.
+queryIntentServices`) can come back empty without it even when a TTS
+engine is installed, which would silently degrade this feature to "never
+speaks" on affected devices. No new runtime permission needed; TTS output
+isn't gated like microphone input is.
+
+**Update (spoken-prompt pass):** new, unverified piece — see above.
+`TextToSpeech`'s three-argument `speak(text, queueMode, params, utteranceId)`
+overload and `setOnUtteranceProgressListener`/`UtteranceProgressListener`
+are checked against the actual Android API (not guessed), but — like
+everything else in this list — not confirmed by an actual Gradle sync or
+on-device test. One likely rough edge to watch for: `UtteranceProgressListener.onError(String)`
+is deprecated in favor of `onError(String, Int)`, but the base class still
+makes the deprecated one-arg overload abstract (the two-arg version has a
+default implementation that just calls the one-arg one), so overriding
+only the deprecated overload is correct and sufficient — expect a
+deprecation warning at that line, not a compile error.

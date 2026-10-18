@@ -231,6 +231,7 @@ fun TodoAiNavGraph(container: AppContainer, initialTodoIdFromNotification: Strin
                         PodScreen(
                             repository = container.todoRepository,
                             connectivityObserver = container.connectivityObserver,
+                            voiceLaunchPreferenceStore = container.voiceLaunchPreferenceStore,
                             onOpenTodo = { id -> navController.navigate("${Routes.TODO_DETAIL}?${Routes.TODO_ID_ARG}=$id") },
                             onAddTodo = {
                                 val today = DateUtils.formatDueDate(LocalDate.now())
@@ -242,6 +243,7 @@ fun TodoAiNavGraph(container: AppContainer, initialTodoIdFromNotification: Strin
                         SettingsScreen(
                             authRepository = container.authRepository,
                             aiModeStore = container.aiModeStore,
+                            voiceLaunchPreferenceStore = container.voiceLaunchPreferenceStore,
                             onBack = { navController.popBackStack() },
                         )
                     }
@@ -271,12 +273,7 @@ fun TodoAiNavGraph(container: AppContainer, initialTodoIdFromNotification: Strin
                     }
                     composable(Routes.PLANNER) {
                         PlannerScreen(
-                            aiRepository = container.aiRepository,
-                            todoRepository = container.todoRepository,
-                            onOpenTodo = { id -> navController.navigate("${Routes.TODO_DETAIL}?${Routes.TODO_ID_ARG}=$id") },
-                            onDiscussPlan = { scope, periodStart, label ->
-                                navController.navigate(dialogRoute(ChatSubjectType.PLAN, "$scope#$periodStart", label))
-                            },
+                            onStartPlanning = { navController.navigate(dialogRoute(ChatSubjectType.PLANNING, null, "Planning")) },
                         )
                     }
                     composable(

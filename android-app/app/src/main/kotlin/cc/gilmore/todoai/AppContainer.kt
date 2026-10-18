@@ -7,6 +7,7 @@ import cc.gilmore.todoai.auth.CredentialStore
 import cc.gilmore.todoai.connectivity.ConnectivityObserver
 import cc.gilmore.todoai.data.local.AiModeStore
 import cc.gilmore.todoai.data.local.AppDatabase
+import cc.gilmore.todoai.data.local.VoiceLaunchPreferenceStore
 import cc.gilmore.todoai.data.remote.NetworkModule
 import cc.gilmore.todoai.repository.AiRepository
 import cc.gilmore.todoai.repository.AuthRepository
@@ -77,6 +78,11 @@ class AppContainer(context: Context) {
     // write path yet, so every request still ends up built with CLOUD.
     val aiModeStore = step("AiModeStore") { AiModeStore(appContext) }
     val aiRepository = step("AiRepository") { AiRepository(aiApiService, aiModeStore) }
+
+    // Backs SettingsScreen's "Listen for a new todo when I open the app"
+    // switch and PodScreen's cold-start auto-listen check — see
+    // VoiceLaunchPreferenceStore's doc comment.
+    val voiceLaunchPreferenceStore = step("VoiceLaunchPreferenceStore") { VoiceLaunchPreferenceStore(appContext) }
 
     private inline fun <T> step(name: String, block: () -> T): T {
         Log.d(TAG, "initializing $name…")

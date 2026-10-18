@@ -55,6 +55,41 @@ mode merges the created `Todo` record(s) into its response as
 todos"); Home mode calls it for the side effect only, since
 `telegram-webhook` has no synchronous channel back to the app.
 
+**Planning mode plays a more active role, not just a stricter read of
+`kind: "plan"`.** `subjectType: "planning"` (`buildSubjectContext`'s
+`'planning'` case) is a genuinely conversational replacement for the old
+one-shot plan generation: it asks the user how many days they're planning
+for before doing anything else, then builds its context from *every* open
+todo (`queryTodos` filtered only to `status === 'open'`, deliberately not
+`buildPlanPrompt`'s stricter "has a due date within the period" filter — an
+undated open todo is exactly the kind of thing a one-shot plan silently
+skipped, and the whole point here is reviewing everything). That context
+also includes `notes` (truncated to 300 chars via the new `truncate`
+helper) and `tags` — fields no other AI-facing context in this codebase
+sends — since there's no explicit "depends on" field on a Todo; any
+dependency the model reasons about has to come from that free-text/metadata
+inference. `buildChatSystemPrompt` instructs the model to use
+`suggestedDueDateChanges` (`shared/ai-schema.ts`'s `dueDateChangeSchema`)
+for that — e.g. two related todos or an inferred dependency whose current
+due dates don't line up — rather than just repeating the due dates already
+on file. Same forced-tool-choice single model call as everything else here,
+just a richer schema again.
+
+`suggestedDueDateChanges` is deliberately **never auto-applied**, unlike
+`createTodos` above — `shared/ai-finalize.ts`'s `filterValidDueDateChanges`
+only drops suggestions referencing a `todoId` outside that turn's candidate
+set (the same id-gating `finalizePlanResult` already does for plan items);
+it does not write anything. Applying an accepted suggestion goes through
+the pre-existing `PATCH /todos/{id}` (`../todo-api/index.ts`'s
+`updateTodo`) the same as any other due-date edit — no new write path was
+added for this. See `../../../docs/api/README.md`'s "Planning mode" section
+for the wire contract, and `../../../android-app/README.md` for the
+Android-side accept flow. `candidateIds` (needed for that gating) meant
+`buildChatSystemPrompt`/`buildSubjectContext` both changed from returning a
+bare string to a small `{ text, candidateIds? }` wrapper — a mechanical
+change for the other three `subjectType`s (`'todo'`/`'plan'`/`'general'`),
+which just have `candidateIds` implicitly `undefined`.
+
 ## What's NOT built here yet
 
 - **The Home Bridge Bot itself** and the Android side of Home mode (the
@@ -106,6 +141,17 @@ the extraction into `../../shared/ai-finalize.ts`) is unverified the same
 no-npm-registry way, plus genuinely untestable end to end until the Home
 Bridge Bot exists — see `../../README.md`'s "About verification" item 5 for
 what was and wasn't checked.
+
+**Planning mode** (`subjectType: "planning"`, `suggestedDueDateChanges`,
+the `buildChatSystemPrompt`/`buildSubjectContext` return-type change to
+`{ text, candidateIds? }`) is unverified the same no-npm-registry way — no
+real `tsc`/build was run. It reuses `validateChatReply`'s existing
+zod-parse-then-throw shape and `finalizePlanResult`'s existing
+candidate-id-gating pattern rather than introducing new validation
+machinery, and `dispatchHomeRequest`'s destructuring was checked by hand
+against the new `ChatSystemPrompt` return type so the Home-mode dispatch
+path (which intentionally ignores the new `candidateIds` — see the
+"Planning mode" section above) still compiles against it.
 
 Bedrock model access must be requested for the model in
 `ai-stack.ts` (Claude Sonnet 4.5 via its `us.` cross-region inference

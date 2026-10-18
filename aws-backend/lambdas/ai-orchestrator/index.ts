@@ -15,6 +15,7 @@ import {
 import {
   buildChatMessages,
   createRequestedTodos,
+  filterValidDueDateChanges,
   finalizePlanResult,
   persistConversation,
   persistPlan,
@@ -38,7 +39,13 @@ import { callBedrockTool } from './bedrock';
 const PENDING_REQUEST_TTL_SECONDS = 24 * 60 * 60;
 /** How many prior turns to feed back to the model as conversation history — Bedrock's `history` and the Home Bridge Bot's `AiRequestPayload.history` both respect this same cap. Real summarization (architecture.md §07: "summarized once it gets long enough to threaten the context window") isn't built yet — this is a blunt cap that keeps token usage bounded in the meantime. */
 const MAX_HISTORY_MESSAGES = 20;
-/** Plan candidates sent to the model, capped so a month/year plan (potentially many todos) stays a "lighter-weight summary" per architecture.md §07 rather than every individual item verbatim. */
+/**
+ * Plan/planning candidates sent to the model, capped so a month/year plan
+ * (potentially many todos) — or a 'planning' conversation's full open-todo
+ * review, which uses this same cap (see buildSubjectContext's 'planning'
+ * case) — stays a "lighter-weight summary" per architecture.md §07 rather
+ * than every individual item verbatim.
+ */
 const MAX_PLAN_CANDIDATES = 60;
 
 /** An expected, user-facing failure (bad reference, missing prerequisite) — carries the HTTP status to report, distinct from an unexpected Bedrock/Telegram/AWS error (which defaults to 502). */
@@ -249,10 +256,39 @@ async function generatePlan(userId: string, input: PlanRequestInput): Promise<Fi
 
 // ---------- chat / dialog ----------
 
-async function buildChatSystemPrompt(userId: string, input: ChatRequestInput): Promise<string> {
-  const contextText = await buildSubjectContext(userId, input);
+/**
+ * `system`'s prompt text plus, when subjectType is 'planning', the exact
+ * todo ids that text's `Context:` block offered the model — needed later
+ * to gate `suggestedDueDateChanges` (see filterValidDueDateChanges)
+ * against what was actually shown, mirroring PlanPrompt.candidateIds
+ * above. Undefined for every other subjectType.
+ */
+interface ChatSystemPrompt {
+  system: string;
+  candidateIds?: string[];
+}
+
+async function buildChatSystemPrompt(userId: string, input: ChatRequestInput): Promise<ChatSystemPrompt> {
+  const context = await buildSubjectContext(userId, input);
   const today = new Date().toISOString().slice(0, 10);
-  return (
+  const planningInstructions = input.subjectType !== 'planning' ? '' : '\n\n' + (
+    'You are in planning mode. Before proposing any agenda, make sure you know how many days the user wants ' +
+    "to plan for — if nothing earlier in this conversation has established that yet, your ONLY job this turn " +
+    'is to ask a short, friendly clarifying question (for example "How many days would you like me to plan ' +
+    'for?"); leave createTodos and suggestedDueDateChanges empty and don\'t propose an agenda yet. Once you do ' +
+    "know the timeframe: you've been given every one of the user's open todos below, not only ones due within " +
+    "that window — review all of them, since something due earlier or later can still be related to what's " +
+    'due in the window. Play an active role rather than just repeating existing due dates back as the plan: ' +
+    'when you notice two or more todos that look related (similar title, project, or tags) or where one seems ' +
+    "to depend on another, and their current due dates don't line up sensibly, propose changing one via " +
+    'suggestedDueDateChanges with a short rationale explaining the connection — this never changes anything by ' +
+    'itself, the user reviews and accepts each suggestion individually, so propose one whenever you genuinely ' +
+    'notice a connection worth surfacing, not only when directly asked. Never suggest a new due date before ' +
+    `${today}, and only reference todoId values from the todos you were given. In your reply text, lay out the ` +
+    'agenda for the requested period in plain conversational language and call out any suggested changes in ' +
+    'words too, not only in suggestedDueDateChanges.'
+  );
+  const system =
     'You are the dialog assistant for Structure, a personal todo manager. Answer the user helpfully and concisely, ' +
     "grounded in the context below. If the context doesn't cover something, say so rather than guessing.\n\n" +
     `Today's date is ${today} (UTC) — use it to resolve relative dates like "tomorrow" or "next Friday" into ` +
@@ -260,14 +296,15 @@ async function buildChatSystemPrompt(userId: string, input: ChatRequestInput): P
     "You can create new todos directly: if the user clearly asks you to add, create, or remember a task, put it " +
     'in createTodos (in addition to confirming it in your reply text) — this actually creates it, not just a ' +
     "suggestion. Don't invent a task the user didn't ask for, and leave createTodos empty when they're just " +
-    'discussing or asking a question rather than asking you to add something.\n\n' +
-    `Context:\n${contextText}`
-  );
+    'discussing or asking a question rather than asking you to add something.' +
+    planningInstructions +
+    `\n\nContext:\n${context.text}`;
+  return { system, candidateIds: context.candidateIds };
 }
 
 async function runChat(userId: string, input: ChatRequestInput): Promise<FinalizeOutcome> {
   const conversation = await loadOrCreateConversation(userId, input);
-  const system = await buildChatSystemPrompt(userId, input);
+  const { system, candidateIds } = await buildChatSystemPrompt(userId, input);
 
   const history = conversation.messages.slice(-MAX_HISTORY_MESSAGES).map((m) => ({
     role: m.role,
@@ -284,14 +321,19 @@ async function runChat(userId: string, input: ChatRequestInput): Promise<Finaliz
     maxTokens: 1000,
   });
 
-  const { reply, createTodos } = validateChatReply(raw);
+  const { reply, createTodos, suggestedDueDateChanges } = validateChatReply(raw);
   const created = await createRequestedTodos(userId, createTodos);
+  const validChanges = filterValidDueDateChanges(candidateIds, suggestedDueDateChanges);
   const messages = buildChatMessages(conversation.messages, input.message, reply, 'cloud');
   const outcome = await persistConversation(userId, conversation.id, conversation.subjectType, conversation.subjectId, messages);
   // Cloud mode is synchronous, so this response is the one place the app
-  // actually sees what got created — merged in only when non-empty so the
-  // wire shape is unchanged for the common "just a reply" turn.
-  return created.length ? { ...outcome, body: { ...outcome.body, createdTodos: created } } : outcome;
+  // actually sees what got created/suggested — each merged in only when
+  // non-empty so the wire shape is unchanged for the common "just a reply"
+  // turn (existing clients that don't read a field see no change).
+  const extra: Record<string, unknown> = {};
+  if (created.length) extra.createdTodos = created;
+  if (validChanges.length) extra.suggestedDueDateChanges = validChanges;
+  return Object.keys(extra).length ? { ...outcome, body: { ...outcome.body, ...extra } } : outcome;
 }
 
 async function loadOrCreateConversation(
@@ -307,21 +349,29 @@ async function loadOrCreateConversation(
   return { id: randomUUID(), subjectType: input.subjectType, subjectId: input.subjectId, messages: [] };
 }
 
+/** What buildSubjectContext hands back — see ChatSystemPrompt's doc comment on why `candidateIds` rides along. */
+interface SubjectContext {
+  text: string;
+  candidateIds?: string[];
+}
+
 /** Builds a short text block describing whatever this conversation is grounded in — see ChatSubjectType in shared/types.ts. */
-async function buildSubjectContext(userId: string, input: ChatRequestInput): Promise<string> {
+async function buildSubjectContext(userId: string, input: ChatRequestInput): Promise<SubjectContext> {
   switch (input.subjectType) {
     case 'todo': {
       if (!input.subjectId) throw new AiRequestError('subjectId is required when subjectType is "todo"', 400);
       const result = await ddb.send(new GetCommand({ TableName: TABLE_NAME, Key: todoKey(userId, input.subjectId) }));
       const todo = result.Item as TodoItem | undefined;
       if (!todo) throw new AiRequestError('todo not found', 404);
-      return [
-        `A single todo: "${todo.title}"`,
-        `status=${todo.status} priority=${todo.priority}`,
-        todo.dueDate ? `due ${todo.dueDate}` : 'no due date',
-        todo.project ? `project=${todo.project}` : undefined,
-        todo.notes ? `notes: ${todo.notes}` : undefined,
-      ].filter(Boolean).join('. ');
+      return {
+        text: [
+          `A single todo: "${todo.title}"`,
+          `status=${todo.status} priority=${todo.priority}`,
+          todo.dueDate ? `due ${todo.dueDate}` : 'no due date',
+          todo.project ? `project=${todo.project}` : undefined,
+          todo.notes ? `notes: ${todo.notes}` : undefined,
+        ].filter(Boolean).join('. '),
+      };
     }
     case 'plan': {
       // subjectId is a Plan's `{scope}#{periodStart}` — see ChatRequestInput's
@@ -331,7 +381,7 @@ async function buildSubjectContext(userId: string, input: ChatRequestInput): Pro
       const plan = result.Item as PlanRecord | undefined;
       if (!plan) throw new AiRequestError('plan not found — generate one first via kind:"plan"', 404);
       const items = plan.items.map((i) => `- ${i.todoId}: ${i.rationale}`).join('\n');
-      return `A generated plan (${plan.scope}, ${plan.periodStart} to ${plan.periodEnd}): ${plan.summary}\n${items}`;
+      return { text: `A generated plan (${plan.scope}, ${plan.periodStart} to ${plan.periodEnd}): ${plan.summary}\n${items}` };
     }
     case 'general': {
       const allTodos = await queryTodos(userId);
@@ -341,7 +391,63 @@ async function buildSubjectContext(userId: string, input: ChatRequestInput): Pro
         .sort((a, b) => (a.dueDate ?? '').localeCompare(b.dueDate ?? ''))
         .slice(0, 5)
         .map((t) => `${t.title} (due ${t.dueDate})`);
-      return `${open.length} open todos in total. Next up: ${upcoming.join('; ') || 'nothing with a due date yet'}.`;
+      return { text: `${open.length} open todos in total. Next up: ${upcoming.join('; ') || 'nothing with a due date yet'}.` };
+    }
+    case 'planning': {
+      // Unlike 'plan' generation's candidate filter (buildPlanPrompt —
+      // status='open' AND has a dueDate AND dueDate<=periodEnd), this
+      // deliberately includes EVERY open todo regardless of due date —
+      // including ones with no due date at all, and ones due well after
+      // whatever window the user ends up asking for — so the model can
+      // actually reason about a related/dependent todo outside the
+      // window, which is the whole point of this mode (see
+      // ChatSystemPrompt's planningInstructions). No periodEnd exists yet
+      // at this point anyway — the model hasn't been told the timeframe,
+      // it's asking the user for it (see buildChatSystemPrompt).
+      const today = new Date().toISOString().slice(0, 10);
+      const allTodos = await queryTodos(userId);
+      const open = allTodos.filter((t) => t.status === 'open');
+      // Todos with a due date first (soonest/most-overdue first), then
+      // todos with no due date at all — an arbitrary but stable order,
+      // rather than sorting undated todos to the front via `(a.dueDate ??
+      // '').localeCompare(...)`'s empty-string-sorts-first behavior, which
+      // would bury the most time-sensitive items under every undated one.
+      const withDate = open
+        .filter((t): t is TodoItem & { dueDate: string } => !!t.dueDate)
+        .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+      const noDate = open.filter((t) => !t.dueDate);
+      const ordered = [...withDate, ...noDate];
+
+      const omittedCount = Math.max(0, ordered.length - MAX_PLAN_CANDIDATES);
+      const included = ordered.slice(0, MAX_PLAN_CANDIDATES);
+      const candidateIds = included.map((t) => t.id);
+
+      const compactTodos = included.map((t) => ({
+        id: t.id,
+        title: t.title,
+        priority: t.priority,
+        dueDate: t.dueDate ?? null,
+        project: t.project ?? undefined,
+        tags: t.tags.length ? t.tags : undefined,
+        // Truncated, not omitted — notes are the best signal this mode has
+        // for spotting a real dependency/relation between two todos (this
+        // app has no explicit "depends on" field), worth the extra tokens
+        // here even though buildPlanPrompt's stricter plan-window context
+        // leaves notes out entirely.
+        notes: t.notes ? truncate(t.notes, 300) : undefined,
+        overdue: !!t.dueDate && t.dueDate < today,
+        recurring: !!t.recurrenceRule,
+      }));
+
+      return {
+        text: JSON.stringify({
+          today,
+          openTodoCount: open.length,
+          todos: compactTodos,
+          omittedFromThisList: omittedCount || undefined,
+        }),
+        candidateIds,
+      };
     }
   }
 }
@@ -382,7 +488,11 @@ async function dispatchHomeRequest(userId: string, input: AiRequestInput, reqId:
     homePrompt = { system: prompt.system, userMessage: prompt.userMessage };
   } else {
     const conversation = await loadOrCreateConversation(userId, input);
-    const system = await buildChatSystemPrompt(userId, input);
+    // candidateIds (only set for subjectType='planning') isn't used here —
+    // Home mode's chat path (telegram-webhook) doesn't validate/gate
+    // suggestedDueDateChanges yet, same Cloud-only scope createdTodos
+    // already has on this path (see runChat's doc comment above).
+    const { system } = await buildChatSystemPrompt(userId, input);
     const history = conversation.messages.slice(-MAX_HISTORY_MESSAGES).map((m) => ({ role: m.role, text: m.text }));
     payload = { kind: 'chat', system, userMessage: input.message, outputSchema: CHAT_OUTPUT_JSON_SCHEMA, history };
     homeContext = {
@@ -423,6 +533,11 @@ function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`missing required env var ${name}`);
   return value;
+}
+
+/** Defensive cap on how much of a todo's notes rides along in the 'planning' subjectType's context — see buildSubjectContext's 'planning' case. */
+function truncate(text: string, maxLength: number): string {
+  return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
 }
 
 function errorMessage(err: unknown): string {

@@ -63,7 +63,7 @@ export type AiMode = 'cloud' | 'home';
 export type AiRequestKind = 'plan' | 'chat';
 export type AiRequestStatus = 'sent' | 'done' | 'failed';
 export type PlanScope = 'day' | 'week' | 'month' | 'year';
-export type ChatSubjectType = 'plan' | 'todo' | 'general';
+export type ChatSubjectType = 'plan' | 'todo' | 'general' | 'planning';
 export type ChatRole = 'user' | 'assistant';
 
 export interface PlanItem {

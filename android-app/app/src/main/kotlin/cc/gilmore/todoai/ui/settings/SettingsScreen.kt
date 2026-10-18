@@ -18,6 +18,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -31,6 +32,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.gilmore.todoai.BuildConfig
 import cc.gilmore.todoai.R
 import cc.gilmore.todoai.data.local.AiModeStore
+import cc.gilmore.todoai.data.local.VoiceLaunchPreferenceStore
 import cc.gilmore.todoai.model.AiMode
 import cc.gilmore.todoai.repository.AuthRepository
 
@@ -38,10 +40,12 @@ import cc.gilmore.todoai.repository.AuthRepository
 fun SettingsScreen(
     authRepository: AuthRepository,
     aiModeStore: AiModeStore,
+    voiceLaunchPreferenceStore: VoiceLaunchPreferenceStore,
     onBack: () -> Unit,
 ) {
-    val viewModel: SettingsViewModel = viewModel { SettingsViewModel(authRepository, aiModeStore) }
+    val viewModel: SettingsViewModel = viewModel { SettingsViewModel(authRepository, aiModeStore, voiceLaunchPreferenceStore) }
     val aiMode by viewModel.aiMode.collectAsState()
+    val autoListenOnLaunch by viewModel.autoListenOnLaunch.collectAsState()
 
     Scaffold(
         topBar = {
@@ -70,6 +74,21 @@ fun SettingsScreen(
                 Icon(Icons.Filled.Logout, contentDescription = null, modifier = Modifier.padding(end = 8.dp))
                 Text("Sign out")
             }
+
+            HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+
+            SectionHeader("Voice")
+            // Live, unlike the AI mode/Home sections below — see
+            // VoiceLaunchPreferenceStore's and PodScreen's doc comments.
+            // Off by default: most app opens are "let me check my list,"
+            // not "let me add one by voice," so this stays opt-in rather
+            // than popping a mic dialog on every launch for everyone.
+            SettingsSwitchRow(
+                title = "Listen for a new todo when I open the app",
+                subtitle = "Lets \"Ok Google, launch Structure\" go straight to the mic — say the todo, and you're done, no tap needed. Off: the Today tab opens normally and you tap the mic button when you want it.",
+                checked = autoListenOnLaunch,
+                onCheckedChange = viewModel::setAutoListenOnLaunch,
+            )
 
             HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
 
@@ -137,5 +156,22 @@ private fun SettingsRow(title: String, subtitle: String? = null) {
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+}
+
+@Composable
+private fun SettingsSwitchRow(title: String, subtitle: String? = null, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            if (subtitle != null) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }

@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.gilmore.todoai.connectivity.ConnectivityObserver
 import cc.gilmore.todoai.data.local.TodoEntity
+import cc.gilmore.todoai.data.local.VoiceLaunchPreferenceStore
+import cc.gilmore.todoai.model.Priority
 import cc.gilmore.todoai.model.TodoStatus
 import cc.gilmore.todoai.repository.TodoRepository
 import cc.gilmore.todoai.util.DateUtils
@@ -36,6 +38,7 @@ import java.time.LocalDate
 class PodViewModel(
     private val repository: TodoRepository,
     connectivityObserver: ConnectivityObserver,
+    private val voiceLaunchPreferenceStore: VoiceLaunchPreferenceStore,
 ) : ViewModel() {
 
     val uiState: StateFlow<PodUiState> = repository.observeTodos()
@@ -83,6 +86,38 @@ class PodViewModel(
     fun deleteTodo(id: String) {
         viewModelScope.launch { repository.deleteTodo(id) }
     }
+
+    /**
+     * Same one-shot voice create as TodoListViewModel.addTodoFromVoice, but
+     * defaults dueDate to today — matching this screen's own manual-add FAB
+     * (see PodScreen's floatingActionButton doc comment) so a voice-added
+     * todo actually shows up on Today instead of landing undated on the
+     * Todos tab.
+     */
+    fun addTodoFromVoice(title: String) {
+        val trimmed = title.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            repository.createTodo(
+                title = trimmed,
+                notes = null,
+                priority = Priority.MEDIUM,
+                dueDate = DateUtils.formatDueDate(LocalDate.now()),
+                reminderAt = null,
+                recurrenceRule = null,
+                project = null,
+                tags = emptyList(),
+            )
+        }
+    }
+
+    /**
+     * One-shot read, awaited directly by PodScreen's cold-start
+     * `LaunchedEffect` rather than collected as a StateFlow — see
+     * VoiceLaunchPreferenceStore.currentlyEnabled's doc comment on why
+     * that avoids a race against DataStore's first real emission.
+     */
+    suspend fun shouldAutoListenOnLaunch(): Boolean = voiceLaunchPreferenceStore.currentlyEnabled()
 }
 
 data class PodUiState(

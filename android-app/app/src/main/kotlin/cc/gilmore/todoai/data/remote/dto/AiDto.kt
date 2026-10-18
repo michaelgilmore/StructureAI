@@ -70,6 +70,23 @@ data class AiRequestResponseDto(
 data class PlanItemDto(val todoId: String, val rationale: String)
 
 /**
+ * Decoded from [ChatSendResultDto.suggestedDueDateChanges] — a proposed
+ * due-date change for a todo that already exists, only ever populated in a
+ * "planning" conversation (see aws-backend/shared/ai-schema.ts's
+ * dueDateChangeSchema doc comment). This is a PROPOSAL only: nothing about
+ * the referenced todo changes until the person taps to accept it in
+ * DialogScreen, which then goes through the normal [TodoRepository.updateTodo]
+ * path — no different than editing the due date by hand.
+ */
+@Serializable
+data class DueDateChangeSuggestionDto(
+    val todoId: String,
+    /** YYYY-MM-DD. */
+    val newDueDate: String,
+    val rationale: String,
+)
+
+/**
  * Decoded from [AiRequestResponseDto.result] when kind == "plan". Same
  * shape for both POST's synchronous result and a GET poll's result (the
  * server's stripKeys()'d PlanRecord) — GET's copy additionally carries
@@ -112,6 +129,8 @@ data class ChatSendResultDto(
     val subjectId: String? = null,
     val reply: String,
     val createdTodos: List<TodoDto> = emptyList(),
+    /** See [DueDateChangeSuggestionDto]'s doc comment. Only ever populated for subjectType == "planning". */
+    val suggestedDueDateChanges: List<DueDateChangeSuggestionDto> = emptyList(),
 )
 
 @Serializable

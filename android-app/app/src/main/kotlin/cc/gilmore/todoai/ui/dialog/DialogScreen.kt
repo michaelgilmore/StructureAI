@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.AssistChip
@@ -22,12 +23,14 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,6 +38,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.gilmore.todoai.model.ChatSubjectType
@@ -113,14 +117,24 @@ fun DialogScreen(
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(uiState.messages) { message -> ChatBubble(message, onOpenTodo) }
+                items(uiState.messages) { message ->
+                    ChatBubble(
+                        message = message,
+                        onOpenTodo = onOpenTodo,
+                        onAcceptDueDateSuggestion = { suggestion -> viewModel.acceptDueDateSuggestion(message.id, suggestion) },
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessageUi, onOpenTodo: (String) -> Unit) {
+private fun ChatBubble(
+    message: ChatMessageUi,
+    onOpenTodo: (String) -> Unit,
+    onAcceptDueDateSuggestion: (DueDateSuggestionUi) -> Unit,
+) {
     val isUser = message.role == "user"
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start) {
@@ -151,6 +165,62 @@ private fun ChatBubble(message: ChatMessageUi, onOpenTodo: (String) -> Unit) {
                         leadingIcon = { Icon(Icons.Filled.Checklist, contentDescription = null, modifier = Modifier.size(AssistChipDefaults.IconSize)) },
                         modifier = Modifier.wrapContentWidth(),
                     )
+                }
+            }
+        }
+        // One card per suggested due-date change (see AiDto.kt's
+        // DueDateChangeSuggestionDto and DialogViewModel's
+        // DueDateSuggestionUi doc comments) — only ever present in a
+        // "planning" conversation. Unlike createdTodos above, nothing here
+        // has happened yet: the person has to tap Accept before
+        // acceptDueDateSuggestion actually changes the todo.
+        if (message.dueDateSuggestions.isNotEmpty()) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                message.dueDateSuggestions.forEach { suggestion ->
+                    DueDateSuggestionCard(suggestion, onOpenTodo, onAcceptDueDateSuggestion)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DueDateSuggestionCard(
+    suggestion: DueDateSuggestionUi,
+    onOpenTodo: (String) -> Unit,
+    onAccept: (DueDateSuggestionUi) -> Unit,
+) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(suggestion.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            Text(
+                text = if (suggestion.currentDueDate != null) {
+                    "Move to ${suggestion.newDueDate} (was ${suggestion.currentDueDate})"
+                } else {
+                    "Set due date to ${suggestion.newDueDate}"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+            Text(suggestion.rationale, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+            Row(modifier = Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (suggestion.isApplied) {
+                    AssistChip(
+                        onClick = {},
+                        enabled = false,
+                        label = { Text("Moved") },
+                        leadingIcon = { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(AssistChipDefaults.IconSize)) },
+                    )
+                } else {
+                    FilledTonalButton(onClick = { onAccept(suggestion) }) {
+                        Text("Accept")
+                    }
+                }
+                TextButton(onClick = { onOpenTodo(suggestion.todoId) }) {
+                    Text("View todo")
                 }
             }
         }

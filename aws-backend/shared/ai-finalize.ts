@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { PutCommand } from '@aws-sdk/lib-dynamodb';
 import { ddb, TABLE_NAME, convoKey, planKey } from './dynamo';
-import { chatToolOutputSchema, planToolOutputSchema, type AiCreateTodoInput } from './ai-schema';
+import { chatToolOutputSchema, planToolOutputSchema, type AiCreateTodoInput, type DueDateChangeSuggestion } from './ai-schema';
 import { buildTodoItem } from './todo-item';
 import type { AiMode, ChatSubjectType, ConversationMessage, ConversationRecord, PlanRecord, PlanScope } from './types';
 
@@ -80,13 +80,47 @@ export async function persistPlan(record: PlanRecord): Promise<void> {
  * [buildChatMessages]/[persistConversation] directly with the fallback
  * text instead. Throws ZodError on a bad shape, same as finalizePlanResult.
  *
- * Returns `createTodos` alongside `reply` (defaulted to `[]` when the model
- * left it out) so both callers can pass it straight to
- * [createRequestedTodos] without re-parsing `raw` themselves.
+ * Returns `createTodos`/`suggestedDueDateChanges` alongside `reply`
+ * (defaulted to `[]` when the model left either out) so callers can pass
+ * them straight to [createRequestedTodos]/[filterValidDueDateChanges]
+ * without re-parsing `raw` themselves.
  */
-export function validateChatReply(raw: unknown): { reply: string; createTodos: AiCreateTodoInput[] } {
+export function validateChatReply(
+  raw: unknown,
+): { reply: string; createTodos: AiCreateTodoInput[]; suggestedDueDateChanges: DueDateChangeSuggestion[] } {
   const parsed = chatToolOutputSchema.parse(raw);
-  return { reply: parsed.reply, createTodos: parsed.createTodos ?? [] };
+  return {
+    reply: parsed.reply,
+    createTodos: parsed.createTodos ?? [],
+    suggestedDueDateChanges: parsed.suggestedDueDateChanges ?? [],
+  };
+}
+
+/**
+ * Drops any suggested due-date change referencing a todoId that wasn't in
+ * the candidate set actually offered to the model this turn — the same
+ * integrity guard finalizePlanResult applies to plan items, applied here
+ * for the same reason (a forced-tool-choice response reliably returns
+ * *valid JSON*, never a guarantee every id inside it was one the model was
+ * actually shown). `candidateIds` is undefined for every subjectType
+ * except 'planning' (see lambdas/ai-orchestrator/index.ts's
+ * buildSubjectContext) — no candidate set means no suggestion in this
+ * reply was ever groundable against real data, so everything is dropped
+ * rather than trusted, not just anything referencing an unknown id.
+ */
+export function filterValidDueDateChanges(
+  candidateIds: readonly string[] | undefined,
+  changes: DueDateChangeSuggestion[],
+): DueDateChangeSuggestion[] {
+  if (!candidateIds || changes.length === 0) return [];
+  const candidateIdSet = new Set(candidateIds);
+  const valid = changes.filter((c) => candidateIdSet.has(c.todoId));
+  if (valid.length < changes.length) {
+    console.warn('ai-finalize: dropped due-date-change suggestions referencing unknown todo ids', {
+      dropped: changes.length - valid.length,
+    });
+  }
+  return valid;
 }
 
 /**

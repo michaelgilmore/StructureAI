@@ -17,6 +17,20 @@ class TodoAiApplication : Application() {
     lateinit var container: AppContainer
         private set
 
+    /**
+     * Consumed at most once per process lifetime, by PodScreen's
+     * cold-start auto-listen check (see its doc comment). A plain
+     * Application-scoped flag is what actually captures "cold start" —
+     * unlike a LaunchedEffect(Unit) alone, which would also re-run every
+     * time PodScreen re-enters composition (navigating back to the Today
+     * tab from elsewhere), and unlike a ViewModel-held flag, which
+     * survives configuration changes but NOT "the Activity was destroyed
+     * and recreated by the same still-alive process" the way this needs
+     * to for "Ok Google, launch Structure" to correctly fire once per
+     * real launch, not once per PodViewModel instance.
+     */
+    var hasAutoListenedThisLaunch = false
+
     override fun onCreate() {
         // Installed before anything else in this method runs, so it catches
         // a throw from AppContainer's construction below too, not just

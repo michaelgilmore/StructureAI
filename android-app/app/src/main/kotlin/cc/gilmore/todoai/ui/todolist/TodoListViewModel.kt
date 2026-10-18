@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import cc.gilmore.todoai.connectivity.ConnectivityObserver
 import cc.gilmore.todoai.data.local.TodoEntity
+import cc.gilmore.todoai.model.Priority
 import cc.gilmore.todoai.model.TodoStatus
 import cc.gilmore.todoai.repository.AuthRepository
 import cc.gilmore.todoai.repository.TodoRepository
@@ -67,6 +68,32 @@ class TodoListViewModel(
 
     fun deleteTodo(id: String) {
         viewModelScope.launch { repository.deleteTodo(id) }
+    }
+
+    /**
+     * One-shot create from a VoiceInputButton transcript — title only, every
+     * other field defaulted the same way an empty manual add-todo form
+     * would leave them (medium priority, no due date/notes/project/tags).
+     * Blank-guarded the same way TodoDetailViewModel.save() guards against
+     * an empty title, since a transcript that came back empty/whitespace
+     * (shouldn't happen — VoiceInputButton already filters that — but
+     * cheap insurance) shouldn't create a titleless todo.
+     */
+    fun addTodoFromVoice(title: String) {
+        val trimmed = title.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            repository.createTodo(
+                title = trimmed,
+                notes = null,
+                priority = Priority.MEDIUM,
+                dueDate = null,
+                reminderAt = null,
+                recurrenceRule = null,
+                project = null,
+                tags = emptyList(),
+            )
+        }
     }
 
     fun signOut() {

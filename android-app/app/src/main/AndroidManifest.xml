@@ -7,6 +7,19 @@
          granted here — see push/NotificationHelper.kt. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Lets TextToSpeech bind to the device's TTS engine under Android
+         11+ package-visibility rules (see ui/components/VoiceInputButton.kt,
+         which speaks a short prompt before opening the voice-add
+         recognizer). Without this, PackageManager's engine lookup can come
+         back empty even though a TTS engine is installed, and the feature
+         silently degrades to "no spoken prompt" instead of actually
+         speaking one. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:name=".TodoAiApplication"
         android:allowBackup="true"

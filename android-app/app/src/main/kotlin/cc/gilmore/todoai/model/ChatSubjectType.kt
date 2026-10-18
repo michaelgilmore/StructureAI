@@ -8,7 +8,9 @@ package cc.gilmore.todoai.model
 enum class ChatSubjectType(val wireValue: String) {
     PLAN("plan"),
     TODO("todo"),
-    GENERAL("general");
+    GENERAL("general"),
+    /** A conversational planning session grounded in ALL open todos, not one stored Plan record — see aws-backend/shared/ai-schema.ts's chatRequestSchema doc comment and PlannerScreen.kt. */
+    PLANNING("planning");
 
     companion object {
         fun fromWire(value: String?): ChatSubjectType = entries.firstOrNull { it.wireValue == value } ?: GENERAL

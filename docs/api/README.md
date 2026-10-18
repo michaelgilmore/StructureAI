@@ -61,8 +61,8 @@ Request body — one of two shapes depending on `kind`:
 {
   "kind": "chat",
   "mode": "cloud",                // or "home"
-  "subjectType": "todo",         // "plan" | "todo" | "general", defaults to "general"
-  "subjectId": "<todo id>",      // required for "todo"; for "plan", a Plan's "{scope}#{periodStart}", e.g. "week#2026-09-08"
+  "subjectType": "todo",         // "plan" | "todo" | "general" | "planning", defaults to "general"
+  "subjectId": "<todo id>",      // required for "todo"; for "plan", a Plan's "{scope}#{periodStart}", e.g. "week#2026-09-08"; absent for "general" and "planning"
   "conversationId": "<uuid>",    // omit to start a new conversation; pass an existing one's id to continue it
   "message": "what should I do first?"
 }
@@ -90,7 +90,8 @@ is `{"reqId", "status": "sent", "kind"}` with no `result` — see above.
   "result": {
     "conversationId": "...", "subjectType": "todo", "subjectId": "...",
     "reply": "...",
-    "createdTodos": [ /* optional — see below; omitted/empty on most replies */ ]
+    "createdTodos": [ /* optional — see below; omitted/empty on most replies */ ],
+    "suggestedDueDateChanges": [ /* optional — "planning" mode only; see below */ ]
   }
 }
 ```
@@ -121,6 +122,45 @@ either way.
   only ever replies to Telegram's own webhook call, not to the app) — the
   model's `reply` text and the app's next `GET /todos` sync are how the
   user finds out what got created.
+
+### Planning mode
+
+`subjectType: "planning"` is a conversation grounded in every one of the
+user's open todos (not one stored Plan record, and not filtered by due
+date the way `kind: "plan"`'s candidate list is — undated open todos are
+included too), meant to replace a one-shot "generate a plan" call with an
+actual back-and-forth. No `subjectId`. The model is instructed
+(`../../aws-backend/lambdas/ai-orchestrator/index.ts`'s
+`buildChatSystemPrompt`) to:
+
+1. Ask how many days the user is planning for, if that isn't already
+   established in the conversation — and do nothing else that turn
+   (`createTodos`/`suggestedDueDateChanges` both empty).
+2. Once known, actually review every open todo it was given (not just ones
+   already due in that window) and propose an agenda in `reply`.
+3. Actively suggest due-date changes via `suggestedDueDateChanges` — e.g.
+   two related todos (similar title/project/tags) or an inferred
+   dependency where the current due dates don't line up — rather than just
+   telling the user to follow whatever due dates are already set.
+
+`suggestedDueDateChanges` (Cloud mode only — see below) is a **proposal**,
+never an automatic write: each entry is `{"todoId", "newDueDate",
+"rationale"}`, and nothing about that todo changes until the app itself
+calls `PATCH /todos/{id}` — the normal update endpoint, no new write path
+exists for this. `todoId` is only ever one of the ids actually included in
+that turn's context; a value the model invents (or one from a prior turn no
+longer valid) is dropped server-side before the response goes out
+(`../../aws-backend/shared/ai-finalize.ts`'s `filterValidDueDateChanges`,
+the same integrity guard `kind: "plan"` already applies to its own
+`items`).
+
+- **Cloud mode**: `result.suggestedDueDateChanges` (shown above) carries
+  the gated suggestions. Omitted (not just empty) when there's nothing to
+  suggest this turn.
+- **Home mode**: not populated — `telegram-webhook`'s finalize path doesn't
+  gate/validate `suggestedDueDateChanges` today (same Cloud-only precedent
+  as `createdTodos`'s Home-mode note above), so a Home-mode "planning" reply
+  is plain conversation only, no suggestions attached.
 
 ## `GET /ai/request/{reqId}`
 
