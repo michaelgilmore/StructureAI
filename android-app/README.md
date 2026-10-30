@@ -1124,3 +1124,267 @@ makes the deprecated one-arg overload abstract (the two-arg version has a
 default implementation that just calls the one-arg one), so overriding
 only the deprecated overload is correct and sufficient — expect a
 deprecation warning at that line, not a compile error.
+
+**Fix: spoken prompt never played on auto-listen.** Root cause: on the
+very first composition pass, `rememberVoiceTts()`'s `TextToSpeech` engine
+is still `null` — its init callback can't fire synchronously within the
+same frame as the constructor call — so the `startVoiceInput` closure
+built on that pass always has `tts = null` baked in. `LaunchedEffect(Unit)`
+only relaunches when its key changes; since `Unit` never changes, Compose
+keeps running the coroutine it launched on that first pass for the rest
+of the process's life, regardless of how many times `PodScreen` recomposes
+afterward with a fresher `startVoiceInput` (once `voiceTts` actually
+finishes initializing). So by the time the effect calls `startVoiceInput()`
+— after awaiting `shouldAutoListenOnLaunch()`'s DataStore read — it's
+calling the stale, TTS-less version every single time, never the current
+one. (The manual mic FAB never had this problem: its `onClick` always
+reads whatever `startVoiceInput` the most recent composition produced,
+not one captured once by a long-lived coroutine.)
+
+Fix: `PodScreen.kt` now wraps `startVoiceInput` in `rememberUpdatedState`
+(`currentStartVoiceInput`) and calls `currentStartVoiceInput()` from
+inside the `LaunchedEffect` instead of the plain `startVoiceInput`
+reference — this makes the effect always see whichever `startVoiceInput`
+is current at the moment it actually runs, TTS included, rather than the
+one frozen at launch.
+
+**Fix #2: `rememberUpdatedState` didn't actually fix it.** It only
+guaranteed the effect would call whichever `startVoiceInput` was *most
+recently produced by a recomposition* — but nothing forces a recomposition
+to happen between the TTS engine becoming ready and the effect's
+`currentStartVoiceInput()` call. If the DataStore read in
+`shouldAutoListenOnLaunch()` resolved before the engine's `onInit`
+callback did (plausible — reading a small preferences file is often
+faster than binding to the system TTS service), the effect would still
+call a closure built while `tts` was null. Recomposition timing was never
+something to lean on here.
+
+The real fix: stop treating "is the TTS engine ready" as a value captured
+once, and make it something a caller can actually *wait* for.
+`voice/VoiceTtsHolder.kt` (new file) owns the single `TextToSpeech`
+instance app-wide, constructed in `TodoAiApplication.onCreate()` — as
+early in the process's life as it can possibly start, well before any
+screen composes — and exposes `suspend fun awaitReady(timeoutMs = 2500):
+TextToSpeech?`, backed by a `CompletableDeferred` completed from the
+engine's `onInit` callback. `rememberVoiceInputLauncher` in
+`ui/components/VoiceInputButton.kt` now takes `getTts: suspend () ->
+TextToSpeech?` instead of a precomputed `tts: TextToSpeech?`, and calls it
+fresh, inside its own `rememberCoroutineScope()`-launched coroutine, every
+single time voice input is actually triggered — so it always actually
+waits for readiness at the moment it's needed, rather than reading
+whatever snapshot happened to exist earlier. Both `VoiceInputButton` and
+`PodScreen`'s auto-listen path now pass the same `getTts = {
+application.voiceTts?.awaitReady() }`. `TodoAiApplication.voiceTts` is
+nullable (unlike `container`) — if `VoiceTtsHolder` construction itself
+somehow throws, that's logged and left null rather than taking the app
+down, and every caller already treats null the same as "not ready":
+skip the prompt, open the recognizer anyway.
+
+**Update (spoken-prompt fix #2):** new, unverified piece — see above.
+`CompletableDeferred`/`withTimeoutOrNull` are both `kotlinx-coroutines-core`,
+already on the classpath transitively (`viewModelScope.launch` is used
+elsewhere in this app), so no new Gradle dependency should be needed, but
+that's inferred, not confirmed by an actual sync.
+
+**Settings icon on Today and Plan.** Mirrors the gear icon already on the
+Todos tab (`TodoListScreen.kt`'s `onOpenSettings`): `PodScreen.kt` gained
+an `onOpenSettings: () -> Unit` param and a matching `IconButton` next to
+its existing Refresh action; `PlannerScreen.kt` gained the same param and
+its first-ever `actions` block (it previously had a bare
+`TopAppBar(title = ...)` with no actions at all). `NavGraph.kt` wires
+both to `{ navController.navigate(Routes.SETTINGS) }`, same as the Todos
+tab's own wiring — all three tabs now reach Settings the same way instead
+of only one of them.
+
+**Update:** new, unverified piece — see above. Straightforward
+`IconButton`/`Icons.Filled.Settings` reuse of an existing, already-working
+pattern; not confirmed by an actual Gradle sync.
+
+## Voice-first
+
+What used to be "add a todo by voice" is now a general voice-first
+session: every voice trigger in the app (both mic FABs, and the Settings
+"Listen for what to do when I open the app" auto-listen toggle) now asks
+"What would you like to do?" instead of assuming you're adding something,
+and after handling whatever you say, asks "What else?" and keeps
+listening — repeating until you say something like "that's all" / "I'm
+done" / "stop," or you back out of the mic dialog, or (a safety net, not
+a real limit) 20 turns pass.
+
+**Command routing — a hybrid, not "route everything to the AI."**
+`voice/VoiceCommandRouter.kt` recognizes a small, fixed set of local
+commands first, and falls through to the same general-purpose AI chat
+endpoint `DialogScreen` already uses (`AiRepository.sendChatMessage`,
+`ChatSubjectType.GENERAL`) for everything else:
+
+- **Mark complete** ("complete the quarterly report," "mark done call
+  the vet," "finish X," …) — the chat backend has no way to do this at
+  all today (`aws-backend/shared/ai-schema.ts`'s `chatToolOutputSchema`
+  only has `createTodos`/`suggestedDueDateChanges`, no
+  `completeTodos`/`deleteTodos`), so this has to be local. Strips a known
+  prefix phrase off the utterance, then matches the remainder against
+  every OPEN todo's title by shared whole words (`bestTitleMatch` —
+  "finish the quarterly report" matches a todo titled "Quarterly report"
+  on the shared words "quarterly"/"report"), picks the best-scoring one,
+  and calls `TodoRepository.completeTodo` directly.
+- **"What's due today" / "show today" / similar** — answered entirely
+  from data already cached in Room (the same OPEN-and-due-today-or-earlier
+  filter `PodViewModel` already applies), with no AI round trip — there's
+  no reason to pay network latency for an answer the local cache already
+  has.
+- **"Start planning" / "let's plan" / similar** — a navigation into the
+  existing Planning conversation (`ChatSubjectType.PLANNING`,
+  `PlannerScreen`'s own flow), which a chat *reply* has no way to trigger
+  on its own — so this has to be a local command too. Ends the voice-first
+  loop once triggered; PlannerScreen's own dialog takes over from there.
+- **Stop phrases** ("nothing else," "that's all," "I'm done," "stop,"
+  "cancel," …) — a local loop-control signal, not something any backend
+  request could express.
+- **Everything else — very much including "add a todo to ..."** — falls
+  through to the AI. This is deliberate, not a gap: the chat backend
+  already creates todos automatically from a plain-language message
+  server-side (`aws-backend/shared/ai-finalize.ts`'s
+  `createRequestedTodos` — "real DynamoDB writes, not a preview the app
+  has to separately confirm") with far more flexible date/detail parsing
+  ("remind me to call the dentist Friday afternoon") than a local keyword
+  match could ever manage, so reimplementing "add" as a fixed local
+  command would be a strict downgrade. `VoiceCommandRouter.handleGeneral`
+  mirrors exactly what `DialogViewModel` already does with a chat
+  response: upsert every `createdTodos` entry into Room via
+  `TodoRepository.upsertFromServer` (so it shows up immediately, not on
+  the next sync), and keep the returned `conversationId` for the rest of
+  this voice session so later turns ("actually make that due Friday")
+  have real multi-turn context — a fresh `VoiceCommandRouter` (and so a
+  fresh conversation) is created each time a voice-first session starts.
+
+**The loop mechanics — suspend, not nested callbacks.**
+`ui/components/VoiceInputButton.kt` was rebuilt around two
+`suspendCancellableCoroutine` bridges — the same technique
+`TodoRepository.fetchFcmToken` already uses for a callback-based Android
+API — instead of the old one-shot `onResult`/`onUnavailable` callback
+shape, because a continuous "speak → listen → act → speak → listen
+again…" loop reads far better as a straight-line suspend function than
+as callbacks nested indefinitely deep:
+
+- `rememberRecognizerCall` wraps one `RecognizerIntent` round trip
+  (`ActivityResultLauncher`) as `suspend () -> String?`, resuming a
+  pending continuation from the launcher's result callback. Only one call
+  is ever in flight (the loop always awaits one before starting the
+  next), so a single mutable slot (`PendingResult`) is enough.
+- `speak(tts, text)` wraps one `TextToSpeech.speak` call as a plain
+  `suspend fun`, resuming when `UtteranceProgressListener.onDone`/
+  `onError` fires. Resuming a coroutine's continuation always hands
+  control back through that coroutine's own dispatcher, so — unlike an
+  earlier version of this feature, which called
+  `ActivityResultLauncher.launch` directly from inside that listener (a
+  background thread) and needed a manual `Handler.post` back to main to
+  do it safely — nothing here needs that anymore: the code *after*
+  `speak(...)` just resumes on Main automatically.
+- `rememberVoiceCommandLauncher` is the actual loop: speak the prompt,
+  `while` turns remain, `listenOnce()`, route it, speak the reply, decide
+  whether to keep going. `VoiceInputButton` is now a thin FAB wrapper
+  around it, used identically by both screens' mic buttons; PodScreen's
+  auto-listen `LaunchedEffect` calls the same `rememberVoiceCommandLauncher`
+  result directly, with no button to hang it off.
+
+**`onSpoken` for on-screen echo.** Every line the loop speaks is also
+handed to an `onSpoken: (String) -> Unit` callback, which both screens
+wire to a Snackbar — so what's happening during a hands-free session is
+still visible on-screen (useful with the volume down, or just as
+confirmation), not purely audio.
+
+**Threading `AiRepository`/`onStartPlanning` everywhere.** Both
+`PodScreen` and `TodoListScreen` gained an `aiRepository: AiRepository`
+param and an `onStartPlanning: () -> Unit` param (the latter is new to
+`TodoListScreen` — it never had a planning entry point before);
+`NavGraph.kt` wires both to `container.aiRepository` and
+`{ navController.navigate(dialogRoute(ChatSubjectType.PLANNING, null,
+"Planning")) }`, the exact same route `PlannerScreen`'s own "Start
+planning" button already uses.
+
+**Left unused, not deleted:** `TodoListViewModel.addTodoFromVoice` and
+`PodViewModel.addTodoFromVoice` (the old single-shot "transcript becomes
+a todo title" path) — `VoiceInputButton` no longer calls either one
+directly; a bare "add ..." utterance now goes through
+`VoiceCommandRouter`'s AI fallback instead. Same convention as
+`PlannerViewModel`'s old scope/date/focus path mentioned above — kept in
+case something still wants the simpler one-shot version later, annotated
+in their own doc comments as unused so a future reader isn't confused
+about why nothing calls them.
+
+**Update (voice-first pass):** new, unverified piece — see above.
+`suspendCancellableCoroutine` bridging two different Android callback
+APIs (`ActivityResultLauncher`, `UtteranceProgressListener`) in the same
+file is the biggest structural change in this pass; the pattern itself is
+already proven elsewhere in this app (`TodoRepository.fetchFcmToken`),
+but this is its first use for either of these two APIs specifically, so
+it's worth confirming on-device that the loop actually advances turn to
+turn (speaks → listens → speaks the reply → speaks "What else?" → listens
+again) rather than just working for one turn. `VoiceCommandRouter`'s
+local-command phrase matching is plain string `contains`/`startsWith`
+checks, deliberately simple — expect some phrasings not to match a local
+command and fall through to the AI instead (not a bug: that's the
+designed fallback, just maybe a slower path than intended for a phrase
+that feels like it should've been "mark complete").
+
+## Goals
+
+High-level goals the user can record and track alongside todos — "Add a
+feature for recording high-level goals. When making a plan the AI
+component should take into consideration progress toward these goals and
+suggest tasks for making progress."
+
+**Design decisions (both deliberate, both from the user directly):**
+
+- **Progress tracking is loose, by AI judgment — not an explicit link
+  field.** A `Goal` has no `goalId` reference on `Todo`, and a `Todo` has
+  no `goalId` of its own either. Both are simply shown to the planning
+  AI together (see the backend section below), and the model infers which
+  open todos relate to which goal itself — the same way it already infers
+  relationships *between* todos for `suggestedDueDateChanges`, rather than
+  requiring the user to file every todo under a goal up front.
+- **A dedicated bottom-nav tab, not a sub-screen of Plan or Settings.**
+  "There should be a Goals screen with an icon in the navigation bar at
+  the bottom between Today and Todos" — `Routes.GOALS` sits between
+  `Routes.POD` and `Routes.TODO_LIST` in both the `NavigationBar`'s item
+  order and `BOTTOM_NAV_ROUTES` (`ui/navigation/NavGraph.kt`), using
+  `Icons.Filled.Flag`.
+
+**Backend (`aws-backend/`):** a `Goal` (`id`, `title`, `notes?`,
+`targetDate?`, `status: 'active' | 'archived'`, timestamps — see
+`shared/types.ts`) gets the same single-table DynamoDB treatment as
+`Todo` (`shared/dynamo.ts`'s `goalKey`, `shared/goal-schema.ts`'s zod
+schemas, `shared/goal-item.ts`'s `buildGoalItem`), a full CRUD Lambda
+(`lambdas/goal-api/`) wired to `/goals` routes in `infra/lib/api-stack.ts`
+behind the same Cognito authorizer `/todos` uses. `ai-orchestrator`'s
+`buildSubjectContext`'s `'planning'` case now also calls `queryGoals`,
+filters to `status === 'active'`, and includes a compact `goals` array
+(id/title/truncated notes/targetDate) in the JSON context handed to the
+model; `buildChatSystemPrompt`'s `planningInstructions` string was
+extended to tell the model to treat those goals as "the real reason
+behind the agenda" and propose a new todo via `createTodos` (with a
+rationale in its reply) when a goal looks stalled — without forcing a
+suggestion for every goal on every turn.
+
+**Android:** `GoalEntity`/`GoalDao`/`AppDatabase.MIGRATION_2_3` (a new
+`goals` table — Room's additive-migration convention, same as
+`MIGRATION_1_2`) are the local cache + offline outbox, exactly mirroring
+`TodoEntity`/`TodoDao`'s combined design (see "Offline sync model" above)
+just without priority/tags/project/recurrence/reminder. `GoalRepository`
+mirrors `TodoRepository`'s push-then-pull `syncNow()` — it shares
+`AppContainer`'s existing `AppDatabase` instance and `SyncScheduler`
+rather than getting a second database or worker; `SyncWorker.doWork()`
+now calls both `todoRepository.syncNow()` and `goalRepository.syncNow()`
+in the same run. `GoalListScreen`/`GoalListViewModel` (`ui/goals/`) are a
+single screen: list + a `showArchived` toggle (same pattern as
+`TodoListViewModel.showCompleted`) + one `GoalEditDialog` used for both
+add and edit, since a goal has only three editable fields and doesn't
+need its own detail route the way a todo does. `DueDatePicker` (already
+generic via its `label` param — see `ui/components/Pickers.kt`) is reused
+unchanged for the target-date field.
+
+**Unverified:** same caveat as the voice-first section above — no real
+Gradle/Android build was run against this change from here (see "About
+verification"); `Icons.Filled.Flag`/`Archive`/`Unarchive` are assumed
+present in `material-icons-extended` (already a dependency) based on
+standard Material icon naming, but haven't been confirmed to resolve.

@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -37,9 +39,18 @@ import androidx.compose.ui.unit.dp
  * verification notes.
  */
 @Composable
-fun PlannerScreen(onStartPlanning: () -> Unit) {
+fun PlannerScreen(onStartPlanning: () -> Unit, onOpenSettings: () -> Unit) {
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Plan") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Plan") },
+                actions = {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                    }
+                },
+            )
+        },
     ) { padding ->
         Column(
             modifier = Modifier

@@ -28,6 +28,7 @@ import type {
   ChatHomeContext,
   ConversationMessage,
   ConversationRecord,
+  GoalItem,
   PendingAiRequestItem,
   PlanHomeContext,
   PlanRecord,
@@ -283,7 +284,13 @@ async function buildChatSystemPrompt(userId: string, input: ChatRequestInput): P
     "to depend on another, and their current due dates don't line up sensibly, propose changing one via " +
     'suggestedDueDateChanges with a short rationale explaining the connection — this never changes anything by ' +
     'itself, the user reviews and accepts each suggestion individually, so propose one whenever you genuinely ' +
-    'notice a connection worth surfacing, not only when directly asked. Never suggest a new due date before ' +
+    'notice a connection worth surfacing, not only when directly asked. ' +
+    "You've also been given the user's active high-level goals below (each with an optional target date) — " +
+    'treat these as the real reason behind the agenda, not just decoration: when a goal has little or no ' +
+    'visible progress (no related open todo, or its related todos are overdue or stalled), propose a new todo ' +
+    'via createTodos that would genuinely move it forward, with a short rationale in your reply text connecting ' +
+    "it back to the goal. Don't force a suggestion for every goal every turn — only when it fits naturally " +
+    'alongside the rest of the agenda. Never suggest a new due date before ' +
     `${today}, and only reference todoId values from the todos you were given. In your reply text, lay out the ` +
     'agenda for the requested period in plain conversational language and call out any suggested changes in ' +
     'words too, not only in suggestedDueDateChanges.'
@@ -407,6 +414,14 @@ async function buildSubjectContext(userId: string, input: ChatRequestInput): Pro
       const today = new Date().toISOString().slice(0, 10);
       const allTodos = await queryTodos(userId);
       const open = allTodos.filter((t) => t.status === 'open');
+      const allGoals = await queryGoals(userId);
+      const activeGoals = allGoals.filter((g) => g.status === 'active');
+      const compactGoals = activeGoals.map((g) => ({
+        id: g.id,
+        title: g.title,
+        notes: g.notes ? truncate(g.notes, 300) : undefined,
+        targetDate: g.targetDate ?? null,
+      }));
       // Todos with a due date first (soonest/most-overdue first), then
       // todos with no due date at all — an arbitrary but stable order,
       // rather than sorting undated todos to the front via `(a.dueDate ??
@@ -445,6 +460,7 @@ async function buildSubjectContext(userId: string, input: ChatRequestInput): Pro
           openTodoCount: open.length,
           todos: compactTodos,
           omittedFromThisList: omittedCount || undefined,
+          goals: compactGoals,
         }),
         candidateIds,
       };
@@ -527,6 +543,16 @@ async function queryTodos(userId: string): Promise<TodoItem[]> {
     ExpressionAttributeValues: { ':pk': userKey(userId), ':prefix': 'TODO#' },
   }));
   return (result.Items ?? []) as TodoItem[];
+}
+
+/** Same shape as queryTodos, over GOAL# items — see buildSubjectContext's 'planning' case, the only caller today. */
+async function queryGoals(userId: string): Promise<GoalItem[]> {
+  const result = await ddb.send(new QueryCommand({
+    TableName: TABLE_NAME,
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+    ExpressionAttributeValues: { ':pk': userKey(userId), ':prefix': 'GOAL#' },
+  }));
+  return (result.Items ?? []) as GoalItem[];
 }
 
 function requireEnv(name: string): string {

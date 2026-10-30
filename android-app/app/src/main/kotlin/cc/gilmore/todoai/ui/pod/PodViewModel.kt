@@ -88,6 +88,11 @@ class PodViewModel(
     }
 
     /**
+     * UNUSED since the voice-first pass (see android-app/README.md's
+     * "Voice-first" section and TodoListViewModel.addTodoFromVoice's
+     * doc comment — same reasoning applies here). Left in place rather
+     * than deleted.
+     *
      * Same one-shot voice create as TodoListViewModel.addTodoFromVoice, but
      * defaults dueDate to today — matching this screen's own manual-add FAB
      * (see PodScreen's floatingActionButton doc comment) so a voice-added

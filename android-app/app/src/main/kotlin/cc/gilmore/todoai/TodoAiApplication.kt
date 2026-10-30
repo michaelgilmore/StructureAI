@@ -3,6 +3,7 @@ package cc.gilmore.todoai
 import android.app.Application
 import android.util.Log
 import cc.gilmore.todoai.push.NotificationHelper
+import cc.gilmore.todoai.voice.VoiceTtsHolder
 
 /**
  * Logging here is deliberately heavy — this is the process's single entry
@@ -31,6 +32,17 @@ class TodoAiApplication : Application() {
      */
     var hasAutoListenedThisLaunch = false
 
+    /**
+     * Created in [onCreate], before anything else that doesn't strictly
+     * need to come first — see [VoiceTtsHolder]'s doc comment for why the
+     * engine needs the earliest possible head start on initializing.
+     * Nullable (unlike [container]): construction failing here should
+     * degrade the voice-add feature's spoken prompt, not take the whole
+     * app down the way a failed [AppContainer] genuinely should.
+     */
+    var voiceTts: VoiceTtsHolder? = null
+        private set
+
     override fun onCreate() {
         // Installed before anything else in this method runs, so it catches
         // a throw from AppContainer's construction below too, not just
@@ -45,6 +57,19 @@ class TodoAiApplication : Application() {
 
         Log.d(TAG, "onCreate: starting")
         super.onCreate()
+
+        try {
+            Log.d(TAG, "onCreate: creating VoiceTtsHolder…")
+            voiceTts = VoiceTtsHolder(this)
+            Log.d(TAG, "onCreate: VoiceTtsHolder created (engine init is async from here)")
+        } catch (e: Throwable) {
+            // Deliberately not rethrown, and deliberately not retried —
+            // voiceTts just stays null, which every caller (see
+            // VoiceInputButton.kt) already treats the same as "engine
+            // never became ready": skip the spoken prompt, open the
+            // recognizer anyway.
+            Log.e(TAG, "onCreate: VoiceTtsHolder construction failed — voice-add will skip the spoken prompt", e)
+        }
 
         try {
             Log.d(TAG, "onCreate: building AppContainer…")

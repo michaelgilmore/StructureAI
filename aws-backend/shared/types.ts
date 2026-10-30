@@ -53,6 +53,40 @@ export interface TodoItem extends Todo {
 }
 
 // ---------------------------------------------------------------------------
+// Goals — high-level, longer-running intentions ("get AWS certified"),
+// distinct from a Todo (a concrete, schedulable task). Deliberately NOT
+// linked to any Todo by a field on either type — see
+// ../../android-app/README.md's "Goals" section for why: progress toward
+// a goal is judged by the planning AI itself, reading goals and todos
+// side by side (lambdas/ai-orchestrator/index.ts's buildSubjectContext,
+// 'planning' case), not by an explicit goalId anywhere. Only three
+// statuses, unlike Todo's three ('open'/'done'/'archived') — a goal
+// doesn't really get "done" the way a task does (there's no single
+// completing action), it stays relevant until you archive it.
+// ---------------------------------------------------------------------------
+
+export type GoalStatus = 'active' | 'archived';
+
+export interface Goal {
+  id: string;
+  userId: string;
+  title: string;
+  notes?: string;
+  /** Calendar date, YYYY-MM-DD — an optional target/deadline. Same no-timezone convention as Todo.dueDate. */
+  targetDate?: string | null;
+  status: GoalStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The DynamoDB item shape for a Goal. */
+export interface GoalItem extends Goal {
+  PK: string;
+  SK: string;
+  entityType: 'GOAL';
+}
+
+// ---------------------------------------------------------------------------
 // AI (Phase 2 — Bedrock plan generation + dialog). See ../docs/architecture.md
 // §03 (Cloud vs Home), §05-§07 (data shapes, the "four scopes"). Cloud mode
 // only for now — `mode: 'home'` is accepted by the type so Phase 3 doesn't

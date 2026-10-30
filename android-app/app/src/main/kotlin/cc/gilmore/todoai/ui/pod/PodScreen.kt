@@ -10,15 +10,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -38,10 +37,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.gilmore.todoai.TodoAiApplication
 import cc.gilmore.todoai.connectivity.ConnectivityObserver
 import cc.gilmore.todoai.data.local.VoiceLaunchPreferenceStore
+import cc.gilmore.todoai.repository.AiRepository
 import cc.gilmore.todoai.repository.TodoRepository
 import cc.gilmore.todoai.ui.components.TodoRow
-import cc.gilmore.todoai.ui.components.rememberVoiceInputLauncher
-import cc.gilmore.todoai.ui.components.rememberVoiceTts
+import cc.gilmore.todoai.ui.components.VoiceInputButton
+import cc.gilmore.todoai.ui.components.rememberVoiceCommandLauncher
 import kotlinx.coroutines.launch
 
 /**
@@ -54,7 +54,7 @@ import kotlinx.coroutines.launch
  * mechanical due-date filter, no model call involved.
  *
  * Also owns the cold-start "auto-listen" check (SettingsScreen's "Listen
- * for a new todo when I open the app" switch) — this is the start
+ * for what to do when I open the app" switch) — this is the start
  * destination (see NavGraph's `startDestination = Routes.POD`), so it's
  * the one screen that's guaranteed to compose on every real app launch.
  * "Cold start," specifically, NOT just "this screen entered composition":
@@ -66,14 +66,22 @@ import kotlinx.coroutines.launch
  * is what actually distinguishes them — a plain flag on the Application
  * singleton, set once and never reset until the process itself restarts,
  * which is the only time "cold start" is really true.
+ *
+ * The mic FAB and the auto-listen effect both drive the same voice-first
+ * session (`ui/components/VoiceInputButton.kt`'s `rememberVoiceCommandLauncher`)
+ * — "What would you like to do?", not just "add a todo" — see
+ * android-app/README.md's "Voice-first" section.
  */
 @Composable
 fun PodScreen(
     repository: TodoRepository,
+    aiRepository: AiRepository,
     connectivityObserver: ConnectivityObserver,
     voiceLaunchPreferenceStore: VoiceLaunchPreferenceStore,
     onOpenTodo: (String) -> Unit,
     onAddTodo: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onStartPlanning: () -> Unit,
 ) {
     val viewModel: PodViewModel = viewModel { PodViewModel(repository, connectivityObserver, voiceLaunchPreferenceStore) }
     val uiState by viewModel.uiState.collectAsState()
@@ -82,13 +90,11 @@ fun PodScreen(
     val scope = rememberCoroutineScope()
     val application = LocalContext.current.applicationContext as TodoAiApplication
 
-    val voiceTts = rememberVoiceTts()
-    val startVoiceInput = rememberVoiceInputLauncher(
-        tts = voiceTts,
-        onResult = { transcript ->
-            viewModel.addTodoFromVoice(transcript)
-            scope.launch { snackbarHostState.showSnackbar("Added \"$transcript\"") }
-        },
+    val startVoiceSession = rememberVoiceCommandLauncher(
+        todoRepository = repository,
+        aiRepository = aiRepository,
+        onStartPlanning = onStartPlanning,
+        onSpoken = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
         onUnavailable = {
             scope.launch { snackbarHostState.showSnackbar("Voice input isn't available on this device") }
         },
@@ -108,8 +114,8 @@ fun PodScreen(
         Log.d(TAG, "auto-listen: preference enabled=$enabled")
         if (enabled) {
             application.hasAutoListenedThisLaunch = true
-            Log.d(TAG, "auto-listen: triggering startVoiceInput()")
-            startVoiceInput()
+            Log.d(TAG, "auto-listen: triggering startVoiceSession()")
+            startVoiceSession()
         }
     }
 
@@ -125,22 +131,24 @@ fun PodScreen(
                             Icon(Icons.Filled.Refresh, contentDescription = "Refresh")
                         }
                     }
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                    }
                 },
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        // Unlike the Todos tab's FAB, a todo created from here should default
-        // to today's due date — see NavGraph.kt's onAddTodo wiring for this
-        // route, which passes Routes.DEFAULT_DUE_DATE_ARG=today into
-        // TodoDetailScreen rather than leaving the field empty. The voice
-        // button mirrors that: PodViewModel.addTodoFromVoice defaults
-        // dueDate to today too, so a voice-added todo shows up on this same
-        // screen right away instead of landing in the undated Todos tab.
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End) {
-                SmallFloatingActionButton(onClick = startVoiceInput) {
-                    Icon(Icons.Filled.Mic, contentDescription = "Add todo by voice")
-                }
+                VoiceInputButton(
+                    todoRepository = repository,
+                    aiRepository = aiRepository,
+                    onStartPlanning = onStartPlanning,
+                    onSpoken = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
+                    onUnavailable = {
+                        scope.launch { snackbarHostState.showSnackbar("Voice input isn't available on this device") }
+                    },
+                )
                 Spacer(modifier = Modifier.height(12.dp))
                 FloatingActionButton(onClick = onAddTodo) {
                     Icon(Icons.Filled.Add, contentDescription = "Add todo")

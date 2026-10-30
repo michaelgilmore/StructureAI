@@ -17,12 +17,17 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
     override suspend fun doWork(): Result {
         Log.d(TAG, "doWork: starting (attempt ${runAttemptCount + 1})")
         val app = applicationContext as TodoAiApplication
-        val result = app.container.todoRepository.syncNow()
-        return if (result.isSuccess) {
+        val todoResult = app.container.todoRepository.syncNow()
+        // Goals share this worker/schedule rather than getting their own —
+        // see AppContainer.kt's doc comment on goalRepository. Both run
+        // every time regardless of whether the other failed, so one
+        // failing never blocks the other's pending changes from syncing.
+        val goalResult = app.container.goalRepository.syncNow()
+        return if (todoResult.isSuccess && goalResult.isSuccess) {
             Log.d(TAG, "doWork: success")
             Result.success()
         } else {
-            Log.w(TAG, "doWork: sync failed, will retry", result.exceptionOrNull())
+            Log.w(TAG, "doWork: sync failed, will retry", todoResult.exceptionOrNull() ?: goalResult.exceptionOrNull())
             Result.retry()
         }
     }

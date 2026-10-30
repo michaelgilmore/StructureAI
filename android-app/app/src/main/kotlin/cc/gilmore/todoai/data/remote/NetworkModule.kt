@@ -52,6 +52,10 @@ object NetworkModule {
     fun buildAiApiService(authRepository: AuthRepository): AiApiService =
         buildService(authRepository, "buildAiApiService", AiApiService::class.java)
 
+    /** Same Retrofit setup again, for aws-backend/lambdas/goal-api — see GoalApiService.kt. */
+    fun buildGoalApiService(authRepository: AuthRepository): GoalApiService =
+        buildService(authRepository, "buildGoalApiService", GoalApiService::class.java)
+
     private fun <T> buildService(authRepository: AuthRepository, callerTag: String, service: Class<T>): T {
         // Printed because Retrofit.Builder().baseUrl(...) throws
         // IllegalArgumentException for a malformed URL, and a leftover

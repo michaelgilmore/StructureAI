@@ -11,6 +11,7 @@ import cc.gilmore.todoai.data.local.VoiceLaunchPreferenceStore
 import cc.gilmore.todoai.data.remote.NetworkModule
 import cc.gilmore.todoai.repository.AiRepository
 import cc.gilmore.todoai.repository.AuthRepository
+import cc.gilmore.todoai.repository.GoalRepository
 import cc.gilmore.todoai.repository.TodoRepository
 import cc.gilmore.todoai.sync.SyncScheduler
 
@@ -59,12 +60,20 @@ class AppContainer(context: Context) {
     // silently unavailable" on its own construction failure.
     val credentialStore = CredentialStore(appContext)
 
-    private val todoDao = step("AppDatabase") { AppDatabase.get(appContext).todoDao() }
+    private val appDatabase = step("AppDatabase") { AppDatabase.get(appContext) }
+    private val todoDao = appDatabase.todoDao()
     private val apiService = step("NetworkModule.buildApiService") { NetworkModule.buildApiService(authRepository) }
     val connectivityObserver = step("ConnectivityObserver") { ConnectivityObserver(appContext) }
     val syncScheduler = step("SyncScheduler") { SyncScheduler(appContext) }
 
     val todoRepository = step("TodoRepository") { TodoRepository(todoDao, apiService, syncScheduler) }
+
+    // Goals — see android-app/README.md's "Goals" section. Shares
+    // AppDatabase/SyncScheduler with todos (same offline-sync machinery,
+    // same SyncWorker run) rather than standing up a second DB or worker.
+    private val goalDao = appDatabase.goalDao()
+    private val goalApiService = step("NetworkModule.buildGoalApiService") { NetworkModule.buildGoalApiService(authRepository) }
+    val goalRepository = step("GoalRepository") { GoalRepository(goalDao, goalApiService, syncScheduler) }
 
     // Phase 2 (Bedrock plan generation + dialog) — a separate Retrofit
     // service/repository pair rather than folding onto TodoApiService/

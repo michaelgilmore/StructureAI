@@ -84,8 +84,8 @@ fun SettingsScreen(
             // not "let me add one by voice," so this stays opt-in rather
             // than popping a mic dialog on every launch for everyone.
             SettingsSwitchRow(
-                title = "Listen for a new todo when I open the app",
-                subtitle = "Lets \"Ok Google, launch Structure\" go straight to the mic — say the todo, and you're done, no tap needed. Off: the Today tab opens normally and you tap the mic button when you want it.",
+                title = "Listen for what to do when I open the app",
+                subtitle = "Lets \"Ok Google, launch Structure\" go straight to the mic — say what you want to do (add a todo, mark one done, ask what's due, start planning) and keep going until you say you're done. Off: the Today tab opens normally and you tap the mic button when you want it.",
                 checked = autoListenOnLaunch,
                 onCheckedChange = viewModel::setAutoListenOnLaunch,
             )

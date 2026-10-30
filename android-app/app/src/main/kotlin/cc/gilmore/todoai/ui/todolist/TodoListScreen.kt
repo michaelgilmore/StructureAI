@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cc.gilmore.todoai.R
 import cc.gilmore.todoai.connectivity.ConnectivityObserver
+import cc.gilmore.todoai.repository.AiRepository
 import cc.gilmore.todoai.repository.AuthRepository
 import cc.gilmore.todoai.repository.TodoRepository
 import cc.gilmore.todoai.ui.components.TodoRow
@@ -48,6 +49,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun TodoListScreen(
     repository: TodoRepository,
+    aiRepository: AiRepository,
     authRepository: AuthRepository,
     connectivityObserver: ConnectivityObserver,
     onAddTodo: () -> Unit,
@@ -55,6 +57,7 @@ fun TodoListScreen(
     onOpenChat: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenReport: () -> Unit,
+    onStartPlanning: () -> Unit,
 ) {
     val viewModel: TodoListViewModel = viewModel { TodoListViewModel(repository, authRepository, connectivityObserver) }
     val todos by viewModel.todos.collectAsState()
@@ -111,17 +114,16 @@ fun TodoListScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             // Voice (small, secondary) stacked above the manual add FAB —
-            // see ui/components/VoiceInputButton.kt's doc comment for why
-            // this is a system RecognizerIntent call, not a custom
-            // SpeechRecognizer. No due-date default here, matching this
-            // FAB's own manual-add behavior (PodScreen's equivalent voice
-            // button defaults to today instead, matching ITS manual FAB).
+            // drives the same general voice-first session as PodScreen's
+            // mic FAB and auto-listen effect now (see
+            // ui/components/VoiceInputButton.kt's doc comment), not a
+            // single-shot "add a todo" the way this used to work.
             Column(horizontalAlignment = Alignment.End) {
                 VoiceInputButton(
-                    onResult = { transcript ->
-                        viewModel.addTodoFromVoice(transcript)
-                        scope.launch { snackbarHostState.showSnackbar("Added \"$transcript\"") }
-                    },
+                    todoRepository = repository,
+                    aiRepository = aiRepository,
+                    onStartPlanning = onStartPlanning,
+                    onSpoken = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
                     onUnavailable = {
                         scope.launch { snackbarHostState.showSnackbar("Voice input isn't available on this device") }
                     },

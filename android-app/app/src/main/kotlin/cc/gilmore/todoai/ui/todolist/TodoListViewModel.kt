@@ -71,13 +71,22 @@ class TodoListViewModel(
     }
 
     /**
-     * One-shot create from a VoiceInputButton transcript — title only, every
-     * other field defaulted the same way an empty manual add-todo form
-     * would leave them (medium priority, no due date/notes/project/tags).
-     * Blank-guarded the same way TodoDetailViewModel.save() guards against
-     * an empty title, since a transcript that came back empty/whitespace
-     * (shouldn't happen — VoiceInputButton already filters that — but
-     * cheap insurance) shouldn't create a titleless todo.
+     * UNUSED since the voice-first pass (see android-app/README.md's
+     * "Voice-first" section) — VoiceInputButton no longer calls this
+     * directly. A bare "add a todo" voice utterance now goes through
+     * VoiceCommandRouter's AI fallback instead (the chat backend creates
+     * it server-side, same as any AI-drafted todo), which also means it
+     * can parse a due date/notes out of natural phrasing this one-shot
+     * version never could. Left in place rather than deleted, same
+     * convention as PlannerViewModel's old scope/date/focus path — see
+     * that class's doc comment.
+     *
+     * One-shot create from a transcript — title only, every other field
+     * defaulted the same way an empty manual add-todo form would leave
+     * them (medium priority, no due date/notes/project/tags). Blank-guarded
+     * the same way TodoDetailViewModel.save() guards against an empty
+     * title, since a transcript that came back empty/whitespace shouldn't
+     * create a titleless todo.
      */
     fun addTodoFromVoice(title: String) {
         val trimmed = title.trim()

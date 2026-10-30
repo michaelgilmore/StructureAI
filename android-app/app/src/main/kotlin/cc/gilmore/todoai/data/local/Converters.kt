@@ -1,6 +1,7 @@
 package cc.gilmore.todoai.data.local
 
 import androidx.room.TypeConverter
+import cc.gilmore.todoai.model.GoalStatus
 import cc.gilmore.todoai.model.Priority
 import cc.gilmore.todoai.model.TodoStatus
 
@@ -17,6 +18,12 @@ class Converters {
 
     @TypeConverter
     fun statusFromWire(value: String): TodoStatus = TodoStatus.fromWire(value)
+
+    @TypeConverter
+    fun goalStatusToWire(value: GoalStatus): String = value.wireValue
+
+    @TypeConverter
+    fun goalStatusFromWire(value: String): GoalStatus = GoalStatus.fromWire(value)
 
     @TypeConverter
     fun syncStateToString(value: SyncState): String = value.name

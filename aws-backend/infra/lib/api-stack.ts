@@ -52,6 +52,21 @@ export class ApiStack extends cdk.Stack {
     });
     props.table.grantReadWriteData(todoApiFn);
 
+    // Goals CRUD — see ../../lambdas/goal-api/index.ts. Same shape as
+    // todoApiFn above; a separate function rather than folded into it for
+    // the same "one function per concern" reasoning that file's own doc
+    // comment gives.
+    const goalApiFn = new NodejsFunction(this, 'GoalApiFn', {
+      functionName: 'todo-ai-goal-api',
+      entry: path.join(__dirname, '../../lambdas/goal-api/index.ts'),
+      runtime: lambda.Runtime.NODEJS_20_X,
+      memorySize: 256,
+      timeout: cdk.Duration.seconds(10),
+      environment: { TABLE_NAME: props.table.tableName },
+      bundling: { minify: true, sourceMap: true },
+    });
+    props.table.grantReadWriteData(goalApiFn);
+
     const authorizer = new HttpUserPoolAuthorizer('Authorizer', props.userPool, {
       userPoolClients: [props.userPoolClient],
       identitySource: ['$request.header.Authorization'],
@@ -80,6 +95,27 @@ export class ApiStack extends cdk.Stack {
         path: routePath,
         methods: [method],
         integration: todoIntegration,
+        authorizer,
+      });
+    }
+
+    // ai-orchestrator reads these during a 'planning' conversation (see
+    // ../../lambdas/ai-orchestrator/index.ts's buildSubjectContext) —
+    // this route is how the app itself manages them, same pattern as
+    // /todos above.
+    const goalIntegration = new HttpLambdaIntegration('GoalApiIntegration', goalApiFn);
+    const goalRoutes: [HttpMethod, string][] = [
+      [HttpMethod.GET, '/goals'],
+      [HttpMethod.POST, '/goals'],
+      [HttpMethod.GET, '/goals/{id}'],
+      [HttpMethod.PATCH, '/goals/{id}'],
+      [HttpMethod.DELETE, '/goals/{id}'],
+    ];
+    for (const [method, routePath] of goalRoutes) {
+      this.httpApi.addRoutes({
+        path: routePath,
+        methods: [method],
+        integration: goalIntegration,
         authorizer,
       });
     }
