@@ -130,6 +130,7 @@ function toInput(item: TodoItem): CreateTodoInput {
     project: item.project,
     tags: item.tags,
     source: item.source,
+    routineId: item.routineId,
   };
 }
 
@@ -149,6 +150,10 @@ function materializeNextOccurrence(userId: string, existing: TodoItem): TodoItem
     project: existing.project,
     tags: existing.tags,
     source: existing.source,
+    // A recurring routine-linked todo's next occurrence should still
+    // count toward that routine once completed — see shared/types.ts's
+    // doc comment on Todo.routineId.
+    routineId: existing.routineId,
     status: 'open',
   });
 }

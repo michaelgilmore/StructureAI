@@ -21,6 +21,16 @@ export interface Todo {
   reminderAt?: string | null;
   /** iCal-style RRULE subset, e.g. "FREQ=WEEKLY;INTERVAL=2". See shared/recurrence.ts. */
   recurrenceRule?: string | null;
+  /**
+   * Set when this todo was created from the Routines screen's "Create
+   * task" action (see ../../android-app/README.md's "Routines" section) —
+   * the one explicit link in this app between a Todo and anything else.
+   * Unlike Goal (deliberately NOT linked to any Todo — see the comment
+   * above the Routine section below), a Routine's progress is tracked by
+   * an exact count ("3 of 3 this week"), which needs a real reference,
+   * not AI inference. Null/absent for an ordinary todo.
+   */
+  routineId?: string | null;
   project?: string | null;
   tags: string[];
   source: TodoSource;
@@ -84,6 +94,43 @@ export interface GoalItem extends Goal {
   PK: string;
   SK: string;
   entityType: 'GOAL';
+}
+
+// ---------------------------------------------------------------------------
+// Routines — things you want to do on a regular cadence ("exercise 3x a
+// week"), as opposed to Goals (open-ended, no explicit cadence) or a plain
+// Todo (a one-off task). UNLIKE Goal, a Routine IS linked to Todo, via
+// Todo.routineId above — "I will create tasks for them from the Routines
+// screen" means each created task should count toward that specific
+// routine's tally, which needs an exact reference, not fuzzy AI matching
+// by title. lambdas/ai-orchestrator/index.ts's buildSubjectContext
+// ('planning' case) computes each active routine's `doneCount` for its
+// current period straight from Todo.routineId + completedAt, and hands
+// the model precise numbers ("2 of 3 this week") rather than asking it to
+// infer progress the way it does for Goals.
+// ---------------------------------------------------------------------------
+
+export type RoutinePeriod = 'day' | 'week' | 'month';
+export type RoutineStatus = 'active' | 'archived';
+
+export interface Routine {
+  id: string;
+  userId: string;
+  title: string;
+  notes?: string;
+  /** How many times per [period] this routine is meant to happen, e.g. targetCount=3, period='week' for "3x a week". */
+  targetCount: number;
+  period: RoutinePeriod;
+  status: RoutineStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The DynamoDB item shape for a Routine. */
+export interface RoutineItem extends Routine {
+  PK: string;
+  SK: string;
+  entityType: 'ROUTINE';
 }
 
 // ---------------------------------------------------------------------------

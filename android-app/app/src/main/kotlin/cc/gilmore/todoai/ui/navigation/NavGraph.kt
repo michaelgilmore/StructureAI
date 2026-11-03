@@ -35,7 +35,7 @@ import cc.gilmore.todoai.AppContainer
 import cc.gilmore.todoai.TodoAiApplication
 import cc.gilmore.todoai.model.ChatSubjectType
 import cc.gilmore.todoai.ui.dialog.DialogScreen
-import cc.gilmore.todoai.ui.goals.GoalListScreen
+import cc.gilmore.todoai.ui.goals.GoalsAndRoutinesScreen
 import cc.gilmore.todoai.ui.login.LoginScreen
 import cc.gilmore.todoai.ui.planner.PlannerScreen
 import cc.gilmore.todoai.ui.pod.PodScreen
@@ -257,8 +257,10 @@ fun TodoAiNavGraph(container: AppContainer, initialTodoIdFromNotification: Strin
                     modifier = Modifier.fillMaxSize().padding(outerPadding),
                 ) {
                     composable(Routes.GOALS) {
-                        GoalListScreen(
-                            repository = container.goalRepository,
+                        GoalsAndRoutinesScreen(
+                            goalRepository = container.goalRepository,
+                            routineRepository = container.routineRepository,
+                            todoRepository = container.todoRepository,
                             connectivityObserver = container.connectivityObserver,
                             onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                         )

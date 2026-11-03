@@ -23,6 +23,7 @@ fun TodoDto.toEntity(syncState: SyncState = SyncState.SYNCED): TodoEntity = Todo
     createdAt = createdAt,
     updatedAt = updatedAt,
     completedAt = completedAt,
+    routineId = routineId,
     syncState = syncState,
 )
 
@@ -35,6 +36,7 @@ fun TodoEntity.toCreateRequest(): CreateTodoRequest = CreateTodoRequest(
     recurrenceRule = recurrenceRule,
     project = project,
     tags = tags.ifEmpty { null },
+    routineId = routineId,
 )
 
 /** Full-replace PATCH, not a partial diff — simpler to reason about for a single-device v1, at the cost of a wasted no-op field or two on the wire. */
@@ -48,4 +50,5 @@ fun TodoEntity.toUpdateRequest(): UpdateTodoRequest = UpdateTodoRequest(
     recurrenceRule = recurrenceRule,
     project = project,
     tags = tags,
+    routineId = routineId,
 )

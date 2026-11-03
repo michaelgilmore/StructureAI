@@ -22,6 +22,10 @@ export function goalKey(userId: string, goalId: string): { PK: string; SK: strin
   return { PK: userKey(userId), SK: `GOAL#${goalId}` };
 }
 
+export function routineKey(userId: string, routineId: string): { PK: string; SK: string } {
+  return { PK: userKey(userId), SK: `ROUTINE#${routineId}` };
+}
+
 /** One row per user — this app is single-device today (see lambdas/device-token). */
 export function deviceKey(userId: string): { PK: string; SK: string } {
   return { PK: userKey(userId), SK: 'DEVICE' };

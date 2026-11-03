@@ -23,11 +23,18 @@ class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
         // every time regardless of whether the other failed, so one
         // failing never blocks the other's pending changes from syncing.
         val goalResult = app.container.goalRepository.syncNow()
-        return if (todoResult.isSuccess && goalResult.isSuccess) {
+        // Routines share this worker/schedule too, for the same reason —
+        // see AppContainer.kt's doc comment on routineRepository.
+        val routineResult = app.container.routineRepository.syncNow()
+        return if (todoResult.isSuccess && goalResult.isSuccess && routineResult.isSuccess) {
             Log.d(TAG, "doWork: success")
             Result.success()
         } else {
-            Log.w(TAG, "doWork: sync failed, will retry", todoResult.exceptionOrNull() ?: goalResult.exceptionOrNull())
+            Log.w(
+                TAG,
+                "doWork: sync failed, will retry",
+                todoResult.exceptionOrNull() ?: goalResult.exceptionOrNull() ?: routineResult.exceptionOrNull(),
+            )
             Result.retry()
         }
     }

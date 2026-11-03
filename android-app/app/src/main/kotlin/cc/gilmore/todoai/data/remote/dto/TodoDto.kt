@@ -28,6 +28,11 @@ data class TodoDto(
     // Absent (not just null) on responses from any backend deployed before
     // this field existed, hence the default rather than a required field.
     val completedAt: String? = null,
+    // Set when this todo was created from the Routines screen's "Create
+    // task" action, or by the AI to help catch a routine back up — see
+    // shared/types.ts's doc comment on Todo.routineId. Defaulted for the
+    // same "older backend" reason as completedAt above.
+    val routineId: String? = null,
 )
 
 @Serializable
@@ -50,9 +55,10 @@ data class UpdateTodoResponse(
     val createdAt: String,
     val updatedAt: String,
     val completedAt: String? = null,
+    val routineId: String? = null,
     val nextOccurrence: TodoDto? = null,
 ) {
-    fun asTodoDto() = TodoDto(id, title, notes, status, priority, dueDate, reminderAt, recurrenceRule, project, tags, source, createdAt, updatedAt, completedAt)
+    fun asTodoDto() = TodoDto(id, title, notes, status, priority, dueDate, reminderAt, recurrenceRule, project, tags, source, createdAt, updatedAt, completedAt, routineId)
 }
 
 /** Request body for POST /todos — matches createTodoSchema on the backend. Omitted fields are left out of the JSON, not sent as null, via NetworkModule's `explicitNulls = false`. */
@@ -66,6 +72,7 @@ data class CreateTodoRequest(
     val recurrenceRule: String? = null,
     val project: String? = null,
     val tags: List<String>? = null,
+    val routineId: String? = null,
 )
 
 /** Request body for PATCH /todos/{id} — matches updateTodoSchema (createTodoSchema.partial() + status). */
@@ -80,6 +87,7 @@ data class UpdateTodoRequest(
     val recurrenceRule: String? = null,
     val project: String? = null,
     val tags: List<String>? = null,
+    val routineId: String? = null,
 )
 
 @Serializable

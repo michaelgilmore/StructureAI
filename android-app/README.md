@@ -1433,3 +1433,77 @@ fallback should never actually get exercised.
 **Unverified**, same caveat as the other sections above (see "About
 verification") — no real Gradle/Android build was run against this
 change.
+
+## Routines
+
+"Add Routines. This will be a place to register all things that I want to
+do on a regular basis. I will create tasks for them from the Routines
+screen. The AI feature should remind me of progress toward Goals and
+Routines if I have not made any. It can also notice if I'm doing a good
+job with any as well."
+
+**Design decisions (both from the user directly):**
+
+- **Explicit frequency target, with tasks linked back — not AI-inferred
+  like Goals.** A Routine has a `targetCount` + `period` ("3x a week"),
+  and unlike Goal (deliberately NOT linked to any Todo — see that
+  section above), a Todo gets a `routineId` field. "I will create tasks
+  for them from the Routines screen" needs exact progress ("2 of 3 this
+  week"), which needs a real reference, not fuzzy title matching.
+- **Combined into the Goals tab**, not a 5th bottom-nav icon or a
+  Settings-only entry point. `ui/goals/GoalsAndRoutinesScreen.kt` is a
+  single screen behind the "Goals" bottom-nav tab, with a `TabRow`
+  ("Goals" / "Routines") under the top bar switching which list and FAB
+  action are active. `ui/goals/GoalRow.kt` holds Goal's row/dialog
+  (renamed from the old standalone `GoalListScreen.kt` once it stopped
+  owning its own `Scaffold`); `ui/goals/RoutineRow.kt` holds Routine's.
+
+**Backend (`aws-backend/`):** a `Routine` (`id`, `title`, `notes?`,
+`targetCount`, `period: 'day'|'week'|'month'`, `status`, timestamps —
+`shared/types.ts`) gets the same CRUD treatment as Goal (`routineKey` in
+`shared/dynamo.ts`, `shared/routine-schema.ts`, `shared/routine-item.ts`,
+`lambdas/routine-api/`, `/routines` routes in `infra/lib/api-stack.ts`).
+`Todo` gained `routineId?: string | null` (`shared/types.ts`,
+`shared/todo-schema.ts`'s `createTodoSchema`, threaded through
+`shared/todo-item.ts`'s `buildTodoItem` and `lambdas/todo-api/index.ts`'s
+`toInput`/`materializeNextOccurrence` so it survives an edit or a
+recurring todo's next occurrence). `ai-orchestrator`'s
+`buildSubjectContext` 'planning' case now also calls `queryRoutines`,
+computes each active routine's `doneCount` for its current period
+(`periodStartFor` + `routineProgress` — Mon-start ISO week for `'week'`,
+counting every todo with a matching `routineId`, status `'done'`, and
+`completedAt` on or after the period start, from `allTodos` — the
+same full query already used for goals/open-todos, not a second one),
+and includes a compact `routines` array (with `doneCount`/`targetCount`/
+`period`/`periodStart`) in the JSON context. `planningInstructions` was
+extended to compare `doneCount` against `targetCount` and how much of the
+period has elapsed: call out a behind-pace routine as a genuine reminder
+(optionally proposing a `createTodos` entry with that routine's id in its
+new `routineId` field — see `shared/ai-schema.ts`'s `CHAT_OUTPUT_JSON_SCHEMA`
+— so it counts toward the same tally once completed), and acknowledge an
+on-pace or ahead-of-pace one too, not just the problems.
+
+**Android:** `RoutineEntity`/`RoutineDao`/`AppDatabase.MIGRATION_3_4` (a
+new `routines` table AND `todos.routineId` column added in the same
+migration) mirror Goal's Room layer exactly; `RoutineRepository` mirrors
+`GoalRepository`'s `syncNow()`, sharing `AppContainer`'s `AppDatabase`/
+`SyncScheduler` the same way; `SyncWorker.doWork()` now syncs all three
+repositories in one run. `TodoEntity.routineId` (and the matching field on
+`TodoDto`/`CreateTodoRequest`/`UpdateTodoRequest`/`UpdateTodoResponse` and
+`Mappers.kt`'s conversions) is the one explicit cross-feature link in this
+app — `TodoRepository.createTodo` gained an optional `routineId` parameter
+(defaulted to `null`, so every existing call site is unaffected) for
+exactly this.
+`RoutineListViewModel.doneCount` mirrors `routineProgress` server-side
+field-for-field (same Mon-start ISO week math via `periodStartFor`), so
+what the Routines tab shows always matches what the planning AI was told.
+`RoutineListViewModel.createTaskForRoutine` is the Routines screen's
+"Create task" action itself: one tap creates a todo titled after the
+routine, due today, with `routineId` set — no form, since the user can
+still open it from Today/Todos afterward to add detail.
+
+**Unverified**, same caveat as the other sections above (see "About
+verification") — no real Gradle/Android build was run against this
+change, and `Icons.Filled.PlaylistAdd` is assumed present in
+`material-icons-extended` based on standard Material icon naming but
+hasn't been confirmed to resolve.

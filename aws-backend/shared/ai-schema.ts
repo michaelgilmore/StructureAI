@@ -166,6 +166,13 @@ export const CHAT_OUTPUT_JSON_SCHEMA: Record<string, unknown> = {
           dueDate: { type: 'string', description: 'YYYY-MM-DD — only if the user specified or clearly implied a date' },
           project: { type: 'string', description: 'Optional project/category label' },
           tags: { type: 'array', items: { type: 'string' }, description: 'Optional short tags' },
+          routineId: {
+            type: 'string',
+            description:
+              'Planning mode only. Set this to the id of one of the routines you were given when this new ' +
+              "todo is meant to count toward that routine's doneCount tally once completed (see the routines " +
+              'list and the planning instructions on when to propose one). Omit for an ordinary todo.',
+          },
         },
         required: ['title'],
       },

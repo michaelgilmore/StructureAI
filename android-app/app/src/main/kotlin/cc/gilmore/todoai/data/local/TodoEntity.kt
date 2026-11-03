@@ -37,6 +37,12 @@ data class TodoEntity(
     // from a backend deployed before this field existed (AppDatabase's
     // MIGRATION_1_2 backfills the column as NULL, not a guessed date).
     val completedAt: String?,
+    // Set when this todo was created from the Routines screen's "Create
+    // task" action (or by the AI, in planning mode, to help catch a
+    // behind-pace routine back up) — see RoutineEntity's doc comment and
+    // aws-backend/shared/types.ts's doc comment on Todo.routineId. Null
+    // for an ordinary todo.
+    val routineId: String?,
     val syncState: SyncState,
 )
 

@@ -69,6 +69,11 @@ class TodoRepository(
         recurrenceRule: String?,
         project: String?,
         tags: List<String>,
+        // Set by the Routines screen's "Create task" action (see
+        // RoutineRepository and ui/goals' RoutineRow) — null for every
+        // other caller, which is why it's last and defaulted rather than
+        // threaded through every existing call site.
+        routineId: String? = null,
     ) {
         val now = java.time.Instant.now().toString()
         val entity = TodoEntity(
@@ -88,6 +93,7 @@ class TodoRepository(
             // A brand-new local todo is always open — see TodoEntity's doc
             // comment on completedAt.
             completedAt = null,
+            routineId = routineId,
             syncState = SyncState.PENDING_CREATE,
         )
         dao.upsert(entity)

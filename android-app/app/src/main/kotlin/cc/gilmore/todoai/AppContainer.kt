@@ -12,6 +12,7 @@ import cc.gilmore.todoai.data.remote.NetworkModule
 import cc.gilmore.todoai.repository.AiRepository
 import cc.gilmore.todoai.repository.AuthRepository
 import cc.gilmore.todoai.repository.GoalRepository
+import cc.gilmore.todoai.repository.RoutineRepository
 import cc.gilmore.todoai.repository.TodoRepository
 import cc.gilmore.todoai.sync.SyncScheduler
 
@@ -74,6 +75,12 @@ class AppContainer(context: Context) {
     private val goalDao = appDatabase.goalDao()
     private val goalApiService = step("NetworkModule.buildGoalApiService") { NetworkModule.buildGoalApiService(authRepository) }
     val goalRepository = step("GoalRepository") { GoalRepository(goalDao, goalApiService, syncScheduler) }
+
+    // Routines — see android-app/README.md's "Routines" section. Same
+    // sharing rationale as Goals above.
+    private val routineDao = appDatabase.routineDao()
+    private val routineApiService = step("NetworkModule.buildRoutineApiService") { NetworkModule.buildRoutineApiService(authRepository) }
+    val routineRepository = step("RoutineRepository") { RoutineRepository(routineDao, routineApiService, syncScheduler) }
 
     // Phase 2 (Bedrock plan generation + dialog) — a separate Retrofit
     // service/repository pair rather than folding onto TodoApiService/

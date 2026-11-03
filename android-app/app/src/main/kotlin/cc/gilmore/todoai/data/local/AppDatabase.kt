@@ -8,11 +8,12 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [TodoEntity::class, GoalEntity::class], version = 3, exportSchema = true)
+@Database(entities = [TodoEntity::class, GoalEntity::class, RoutineEntity::class], version = 4, exportSchema = true)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun todoDao(): TodoDao
     abstract fun goalDao(): GoalDao
+    abstract fun routineDao(): RoutineDao
 
     companion object {
         private const val TAG = "TodoAi.AppDatabase"
@@ -25,7 +26,7 @@ abstract class AppDatabase : RoomDatabase() {
                     Log.d(TAG, "building Room database…")
                     try {
                         Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "todo-ai.db")
-                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                             .build()
                             .also {
                                 instance = it
@@ -64,6 +65,25 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE TABLE IF NOT EXISTS `goals` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, `notes` TEXT, " +
                         "`targetDate` TEXT, `status` TEXT NOT NULL, `createdAt` TEXT NOT NULL, `updatedAt` TEXT NOT NULL, " +
                         "`syncState` TEXT NOT NULL, PRIMARY KEY(`id`))"
+                )
+            }
+        }
+
+        /**
+         * Adds the "routines" table AND the `routines`-linking column on
+         * the existing "todos" table in the same migration — see
+         * RoutineEntity's and TodoEntity.routineId's doc comments, and
+         * android-app/README.md's "Routines" section. Existing todo rows
+         * get routineId = NULL (an ordinary, not-routine-linked todo),
+         * same additive-only convention as MIGRATION_1_2.
+         */
+        val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE todos ADD COLUMN routineId TEXT")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `routines` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, `notes` TEXT, " +
+                        "`targetCount` INTEGER NOT NULL, `period` TEXT NOT NULL, `status` TEXT NOT NULL, " +
+                        "`createdAt` TEXT NOT NULL, `updatedAt` TEXT NOT NULL, `syncState` TEXT NOT NULL, PRIMARY KEY(`id`))"
                 )
             }
         }

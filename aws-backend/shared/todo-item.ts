@@ -36,6 +36,7 @@ export function buildTodoItem(
     project: input.project ?? null,
     tags: input.tags ?? [],
     source: input.source ?? 'app',
+    routineId: input.routineId ?? null,
     createdAt: createdAt ?? now,
     updatedAt: now,
     // Always null here — every caller (a fresh create, a materialized

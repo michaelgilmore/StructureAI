@@ -32,6 +32,7 @@ import type {
   PendingAiRequestItem,
   PlanHomeContext,
   PlanRecord,
+  RoutineItem,
   TodoItem,
 } from '../../shared/types';
 import { callBedrockTool } from './bedrock';
@@ -290,7 +291,17 @@ async function buildChatSystemPrompt(userId: string, input: ChatRequestInput): P
     'visible progress (no related open todo, or its related todos are overdue or stalled), propose a new todo ' +
     'via createTodos that would genuinely move it forward, with a short rationale in your reply text connecting ' +
     "it back to the goal. Don't force a suggestion for every goal every turn — only when it fits naturally " +
-    'alongside the rest of the agenda. Never suggest a new due date before ' +
+    'alongside the rest of the agenda. ' +
+    "You've also been given the user's active routines below — recurring things they've committed to doing a " +
+    'certain number of times per day/week/month (targetCount/period), each with doneCount: exactly how many ' +
+    "times it's already been done in the CURRENT period (periodStart through today — not all-time). Compare " +
+    "doneCount against targetCount and how much of the period has elapsed: if a routine is clearly behind pace " +
+    "(e.g. little time left in the period and doneCount well short of targetCount), say so plainly in your reply " +
+    'text — a genuine reminder, not nagging — and optionally propose a todo via createTodos (set its routineId ' +
+    "field to that routine's id, so it counts toward the same tally once completed) that would help catch it up. " +
+    'If a routine is on pace or ahead of it, acknowledge that too — a short, genuine note of progress, not an ' +
+    'empty compliment — rather than only ever mentioning routines when something is wrong. Never suggest a new ' +
+    'due date before ' +
     `${today}, and only reference todoId values from the todos you were given. In your reply text, lay out the ` +
     'agenda for the requested period in plain conversational language and call out any suggested changes in ' +
     'words too, not only in suggestedDueDateChanges.'
@@ -422,6 +433,20 @@ async function buildSubjectContext(userId: string, input: ChatRequestInput): Pro
         notes: g.notes ? truncate(g.notes, 300) : undefined,
         targetDate: g.targetDate ?? null,
       }));
+      const allRoutines = await queryRoutines(userId);
+      const activeRoutines = allRoutines.filter((r) => r.status === 'active');
+      const compactRoutines = activeRoutines.map((r) => ({
+        id: r.id,
+        title: r.title,
+        notes: r.notes ? truncate(r.notes, 300) : undefined,
+        targetCount: r.targetCount,
+        period: r.period,
+        periodStart: periodStartFor(r.period, today),
+        // Computed from every todo (not just `open`) linked via
+        // Todo.routineId — see routineProgress's doc comment. Precise by
+        // design, unlike goals' AI-inferred progress.
+        doneCount: routineProgress(r, allTodos, today),
+      }));
       // Todos with a due date first (soonest/most-overdue first), then
       // todos with no due date at all — an arbitrary but stable order,
       // rather than sorting undated todos to the front via `(a.dueDate ??
@@ -461,6 +486,7 @@ async function buildSubjectContext(userId: string, input: ChatRequestInput): Pro
           todos: compactTodos,
           omittedFromThisList: omittedCount || undefined,
           goals: compactGoals,
+          routines: compactRoutines,
         }),
         candidateIds,
       };
@@ -553,6 +579,53 @@ async function queryGoals(userId: string): Promise<GoalItem[]> {
     ExpressionAttributeValues: { ':pk': userKey(userId), ':prefix': 'GOAL#' },
   }));
   return (result.Items ?? []) as GoalItem[];
+}
+
+/** Same shape again, over ROUTINE# items — see buildSubjectContext's 'planning' case, the only caller today. */
+async function queryRoutines(userId: string): Promise<RoutineItem[]> {
+  const result = await ddb.send(new QueryCommand({
+    TableName: TABLE_NAME,
+    KeyConditionExpression: 'PK = :pk AND begins_with(SK, :prefix)',
+    ExpressionAttributeValues: { ':pk': userKey(userId), ':prefix': 'ROUTINE#' },
+  }));
+  return (result.Items ?? []) as RoutineItem[];
+}
+
+/**
+ * The first calendar day of the routine's current period, as a
+ * YYYY-MM-DD string — 'day' is just `today` itself, 'week' is the Monday
+ * on or before `today` (ISO week, not Sunday-start), 'month' is the 1st
+ * of `today`'s month. Used only to bucket a routine-linked todo's
+ * `completedAt` into "counts toward this period" vs. not — see
+ * routineProgress below.
+ */
+function periodStartFor(period: RoutineItem['period'], today: string): string {
+  const date = new Date(`${today}T00:00:00.000Z`);
+  if (period === 'day') return today;
+  if (period === 'week') {
+    const isoDayOfWeek = (date.getUTCDay() + 6) % 7; // Mon=0 .. Sun=6
+    date.setUTCDate(date.getUTCDate() - isoDayOfWeek);
+    return date.toISOString().slice(0, 10);
+  }
+  // 'month'
+  return `${today.slice(0, 7)}-01`;
+}
+
+/**
+ * How many times a routine has been completed within its own current
+ * period (today/this week/this month, per [periodStartFor]) — counts any
+ * todo linked via Todo.routineId whose status is 'done' and whose
+ * completedAt date falls on or after the period start. `allTodos` is
+ * whatever buildSubjectContext's 'planning' case already queried (every
+ * status, not just open) — see that case for why completed ones matter
+ * here specifically.
+ */
+function routineProgress(routine: RoutineItem, allTodos: TodoItem[], today: string): number {
+  const periodStart = periodStartFor(routine.period, today);
+  return allTodos.filter((t) => {
+    if (t.routineId !== routine.id || t.status !== 'done' || !t.completedAt) return false;
+    return t.completedAt.slice(0, 10) >= periodStart;
+  }).length;
 }
 
 function requireEnv(name: string): string {

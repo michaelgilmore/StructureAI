@@ -13,6 +13,10 @@ export const createTodoSchema = z.object({
   project: z.string().max(100).nullable().optional(),
   tags: z.array(z.string().max(40)).max(20).default([]),
   source: z.enum(['app', 'telegram', 'ai']).default('app'),
+  // Set by the Routines screen's "Create task" action — see shared/types.ts's
+  // doc comment on Todo.routineId. Not settable via the AI's createTodos
+  // tool (ai-finalize.ts never passes it through), only this direct path.
+  routineId: z.string().nullable().optional(),
 });
 
 export const updateTodoSchema = createTodoSchema.partial().extend({
