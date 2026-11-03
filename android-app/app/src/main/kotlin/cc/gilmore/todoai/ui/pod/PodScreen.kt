@@ -110,8 +110,15 @@ fun PodScreen(
             Log.d(TAG, "auto-listen: already consumed this process — not a cold start, skipping")
             return@LaunchedEffect
         }
-        val enabled = viewModel.shouldAutoListenOnLaunch()
-        Log.d(TAG, "auto-listen: preference enabled=$enabled")
+        // The post-splash "use voice this launch?" prompt (see
+        // ui/voiceprompt/VoiceLaunchPromptDialog.kt and NavGraph.kt) has
+        // already resolved this decision before this screen could even
+        // compose — NavGraph.kt gates everything else in the main app on
+        // it. The `?:` fallback is defensive only (that gate always runs
+        // on a real cold start); it never writes the decision back to
+        // VoiceLaunchPreferenceStore either way.
+        val enabled = application.voiceLaunchPromptDecision ?: viewModel.shouldAutoListenOnLaunch()
+        Log.d(TAG, "auto-listen: enabled=$enabled")
         if (enabled) {
             application.hasAutoListenedThisLaunch = true
             Log.d(TAG, "auto-listen: triggering startVoiceSession()")

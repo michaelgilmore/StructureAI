@@ -33,6 +33,25 @@ class TodoAiApplication : Application() {
     var hasAutoListenedThisLaunch = false
 
     /**
+     * The result of the post-splash "use voice this launch?" prompt (see
+     * ui/voiceprompt/VoiceLaunchPromptDialog.kt) — null until that prompt
+     * has resolved (a tap, or its 5-second countdown lapsing), then fixed
+     * for the rest of this process's life. Application-scoped for the
+     * same reason [hasAutoListenedThisLaunch] is (see its doc comment
+     * just above): a plain remembered Compose state wouldn't survive the
+     * Activity being destroyed and recreated by the same still-alive
+     * process (e.g. a rotation), and this prompt should only ever ask
+     * once per real launch, not once per Activity instance.
+     *
+     * Deliberately NOT written back to VoiceLaunchPreferenceStore — this
+     * is a one-time-per-launch override of whether PodScreen's cold-start
+     * check fires, never a change to the persisted Settings switch; see
+     * VoiceLaunchPromptDialog's own doc comment and PodScreen's auto-listen
+     * effect.
+     */
+    var voiceLaunchPromptDecision: Boolean? = null
+
+    /**
      * Created in [onCreate], before anything else that doesn't strictly
      * need to come first — see [VoiceTtsHolder]'s doc comment for why the
      * engine needs the earliest possible head start on initializing.

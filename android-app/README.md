@@ -1388,3 +1388,48 @@ Gradle/Android build was run against this change from here (see "About
 verification"); `Icons.Filled.Flag`/`Archive`/`Unarchive` are assumed
 present in `material-icons-extended` (already a dependency) based on
 standard Material icon naming, but haven't been confirmed to resolve.
+
+## Post-splash voice prompt
+
+"Add a popup that comes up right after the splash screen that asks if you
+want to use voice. It should count down 5 seconds and then default to
+whatever the current setting is. This selection should not change the
+value in settings."
+
+`ui/voiceprompt/VoiceLaunchPromptDialog.kt` is a plain `AlertDialog` shown
+exactly once per process, inserted in `TodoAiNavGraph` (`ui/navigation/
+NavGraph.kt`) right after the `showSplash` gate and before the sign-in
+check — so it appears even before Login on a fresh install, not just
+before PodScreen. It reads `VoiceLaunchPreferenceStore.currentlyEnabled()`
+once (the persisted Settings value) as both its initial display default
+and its countdown's fallback, counts down from 5 seconds, and resolves —
+via a tap on Yes/No, a back-press (treated the same as the countdown
+lapsing), or the countdown itself reaching zero — to a plain `Boolean`.
+
+**Never written back to the setting.** The resolved value is stored only
+on `TodoAiApplication.voiceLaunchPromptDecision` (an in-memory,
+Application-scoped `Boolean?`, not DataStore) — `VoiceLaunchPreferenceStore.
+setAutoListenOnLaunch` is never called from this path, so answering either
+way here never changes SettingsScreen's "Listen for what to do when I open
+the app" switch. It's a one-launch override of *whether the cold-start
+voice session fires this time*, not a change to the persisted preference
+itself.
+
+**Application-scoped, like `hasAutoListenedThisLaunch`.** A plain
+`remember`ed Compose state wouldn't survive the Activity being destroyed
+and recreated by the same still-alive process (e.g. a rotation) — see
+`hasAutoListenedThisLaunch`'s own doc comment in `TodoAiApplication.kt`
+for why that distinction matters here specifically. `NavGraph.kt`'s local
+`voicePromptDecision` state is seeded from the Application field, so a
+decision already made before a rotation isn't asked again.
+
+**PodScreen's auto-listen effect** now reads
+`application.voiceLaunchPromptDecision` first, falling back to
+`viewModel.shouldAutoListenOnLaunch()` (the direct persisted-setting read)
+only defensively — in practice the prompt's gate in `NavGraph.kt` always
+resolves before PodScreen can compose on a real cold start, so that
+fallback should never actually get exercised.
+
+**Unverified**, same caveat as the other sections above (see "About
+verification") — no real Gradle/Android build was run against this
+change.

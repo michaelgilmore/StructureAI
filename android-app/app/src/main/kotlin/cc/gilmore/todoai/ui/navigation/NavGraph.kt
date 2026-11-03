@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -31,6 +32,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import cc.gilmore.todoai.AppContainer
+import cc.gilmore.todoai.TodoAiApplication
 import cc.gilmore.todoai.model.ChatSubjectType
 import cc.gilmore.todoai.ui.dialog.DialogScreen
 import cc.gilmore.todoai.ui.goals.GoalListScreen
@@ -41,6 +43,7 @@ import cc.gilmore.todoai.ui.report.ReportScreen
 import cc.gilmore.todoai.ui.settings.SettingsScreen
 import cc.gilmore.todoai.ui.splash.SplashScreen
 import cc.gilmore.todoai.ui.tododetail.TodoDetailScreen
+import cc.gilmore.todoai.ui.voiceprompt.VoiceLaunchPromptDialog
 import cc.gilmore.todoai.ui.todolist.TodoListScreen
 import cc.gilmore.todoai.util.DateUtils
 import java.net.URLDecoder
@@ -129,6 +132,35 @@ fun TodoAiNavGraph(container: AppContainer, initialTodoIdFromNotification: Strin
     var showSplash by remember { mutableStateOf(true) }
     if (showSplash) {
         SplashScreen(onFinished = { showSplash = false })
+        return
+    }
+
+    // "Use voice this launch?" — asked exactly once per process, right
+    // after the splash screen and before anything else in the main app
+    // composes (even the sign-in check below), per the user's own framing
+    // ("right after the splash screen"). `voicePromptDecision` is seeded
+    // from the Application-scoped field so a decision already made before
+    // an Activity recreation (e.g. a rotation) isn't asked again — see
+    // TodoAiApplication.voiceLaunchPromptDecision's doc comment. Answering
+    // either way, or letting the dialog's countdown lapse, never touches
+    // VoiceLaunchPreferenceStore — see VoiceLaunchPromptDialog's doc
+    // comment.
+    val application = LocalContext.current.applicationContext as TodoAiApplication
+    var voicePromptDecision by remember { mutableStateOf(application.voiceLaunchPromptDecision) }
+    if (voicePromptDecision == null) {
+        // A plain loading spinner behind the dialog — same treatment as
+        // the `isSignedIn == null` case below — rather than an empty
+        // window showing through the dialog's scrim.
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        VoiceLaunchPromptDialog(
+            voiceLaunchPreferenceStore = container.voiceLaunchPreferenceStore,
+            onDecision = { decision ->
+                application.voiceLaunchPromptDecision = decision
+                voicePromptDecision = decision
+            },
+        )
         return
     }
 
